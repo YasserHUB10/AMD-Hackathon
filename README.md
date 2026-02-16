@@ -2,21 +2,24 @@
 
 ## Project Description
 
-The AMD Hackathon project is an innovative solution aimed at [brief description of the project, its goals, and target audience]. This project leverages cutting-edge technology to provide a unique experience for users, streamlining processes and enhancing functionality.
+The AMD Hackathon project is an innovative solution aimed at Astra AI,  A privacy-conscious AI assistant that:  1. Prioritises important messages  2. Summarises conversations  3. Extracts deadlines & tasks  4. Suggests quick smart replies.  We convert conversations into actionable intelligence. This project leverages cutting-edge technology to provide a unique experience for users, streamlining processes and enhancing functionality.
 
 ## Features
 
-- **Feature 1**: Description of feature 1.
-- **Feature 2**: Description of feature 2.
-- **Feature 3**: Description of feature 3.
-- **Feature 4**: Description of feature 4.
+- **Feature 1**: Prioritises important messages
+- **Feature 2**: Summarises conversations
+- **Feature 3**: Extracts deadlines & tasks
+- **Feature 4**: Suggests quick smart replies
 
 ## Technologies
 
-This project utilizes the following technologies:
-- Language/Framework 1
-- Language/Framework 2
-- Language/Framework 3
+This project utilises the following technologies:
+-Bubble.io 
+- Figma
+-FlutterFlow
+- Replit
+- Claude Code
+- CHatGPT 
 
 ## Installation Instructions
 
