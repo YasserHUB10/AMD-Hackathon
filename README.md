@@ -1,56 +1,16 @@
-# Project Documentation for AMD Hackathon
+# React + Vite
 
-## Project Description
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-The AMD Hackathon project is an innovative solution aimed at Astra AI,  A privacy-conscious AI assistant that:  1. Prioritises important messages  2. Summarises conversations  3. Extracts deadlines & tasks  4. Suggests quick smart replies.  We convert conversations into actionable intelligence. This project leverages cutting-edge technology to provide a unique experience for users, streamlining processes and enhancing functionality.
+Currently, two official plugins are available:
 
-## Features
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-- **Feature 1**: Prioritises important messages
-- **Feature 2**: Summarises conversations
-- **Feature 3**: Extracts deadlines & tasks
-- **Feature 4**: Suggests quick smart replies
+## React Compiler
 
-## Technologies
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-This project utilises the following technologies:
--Bubble.io 
-- Figma
--FlutterFlow
-- Replit
-- Claude Code
-- CHatGPT 
+## Expanding the ESLint configuration
 
-## Installation Instructions
-
-To install this project, follow these steps:
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/YasserHUB10/AMD-Hackathon.git
-   ```
-2. Navigate into the project directory:
-   ```bash
-   cd AMD-Hackathon
-   ```
-3. Install the necessary dependencies:
-   ```bash
-   npm install
-   ```
-
-## Usage
-
-To run the project, execute the following command:
-```bash
-npm start
-```
-
-## Contribution Guidelines
-
-We welcome contributions! To contribute to the project:
-1. Fork the repository.
-2. Create a new branch: `git checkout -b feature-branch`
-3. Make your changes and commit them: `git commit -m 'Add some feature'`
-4. Push to the branch: `git push origin feature-branch`
-5. Open a pull request with a description of your changes.
-
-For more details, please see the [CONTRIBUTING.md](path_to_contributing_guidelines) file if available.
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
