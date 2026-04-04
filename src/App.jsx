@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { MessageCircle, Zap, Clock, CheckCircle, Send, Sparkles, Filter, TrendingUp, Calendar, Plus, X, Edit, Loader2 } from 'lucide-react';
-import { analyzeMessage, generateInboxSummary, isGeminiAvailable } from './gemini';
+import { analyzeMessage, generateInboxSummary, initGemini, isGeminiAvailable } from './gemini';
 
 const WhatsAppAIDashboard = () => {
   const [messages, setMessages] = useState([]);
@@ -171,6 +171,7 @@ const WhatsAppAIDashboard = () => {
   }, []);
 
   useEffect(() => {
+    initGemini();
     processMessagesWithAI();
     setScheduledMessages(sampleScheduled);
   }, [processMessagesWithAI]);
