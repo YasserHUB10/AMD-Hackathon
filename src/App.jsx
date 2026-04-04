@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { MessageCircle, Zap, Clock, CheckCircle, Send, Sparkles, Filter, TrendingUp, Calendar, Plus, X, Edit } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { MessageCircle, Zap, Clock, CheckCircle, Send, Sparkles, Filter, TrendingUp, Calendar, Plus, X, Edit, Loader2 } from 'lucide-react';
+import { analyzeMessage, generateInboxSummary, isGeminiAvailable } from './gemini';
 
 const WhatsAppAIDashboard = () => {
   const [messages, setMessages] = useState([]);
@@ -9,6 +10,8 @@ const WhatsAppAIDashboard = () => {
   const [filter, setFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('inbox');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [overallSummary, setOverallSummary] = useState('');
   const [scheduleForm, setScheduleForm] = useState({
     recipient: '',
     message: '',
@@ -17,17 +20,42 @@ const WhatsAppAIDashboard = () => {
     repeat: 'none'
   });
 
-  // Simulated messages with AI analysis
-  const sampleMessages = [
+  // Raw messages — AI fields will be filled by Gemini
+  const rawMessages = [
     {
       id: 1,
-      sender: " Ahmed   ",
+      sender: "Ahmed",
       phone: "+91 8885536667",
       content: "Hi! Can we reschedule tomorrow's meeting to 3 PM? Something urgent came up.",
       timestamp: new Date(Date.now() - 300000),
-      priority: "high",
-      category: "work",
-      sentiment: "neutral",
+    },
+    {
+      id: 2,
+      sender: "Friends Group",
+      phone: "+91 8462135789",
+      content: "Do not forget to take your Laptop Bag! Everyone arrive early for good impression.",
+      timestamp: new Date(Date.now() - 600000),
+    },
+    {
+      id: 3,
+      sender: "LinkedIn Updates",
+      phone: "+1234567892",
+      content: "You have 5 new job recommendations based on your profile. Check them out now!",
+      timestamp: new Date(Date.now() - 900000),
+    },
+    {
+      id: 4,
+      sender: "Alex Chen - Client",
+      phone: "+040 9834567893",
+      content: "The payment for invoice #1067 has been processed. You should see it in 2-3 business days. Thanks for your excellent work!",
+      timestamp: new Date(Date.now() - 1200000),
+    }
+  ];
+
+  // Hardcoded fallback data (used when Gemini API key is not set)
+  const fallbackAI = {
+    1: {
+      priority: "high", category: "work", sentiment: "neutral",
       suggestedReplies: [
         "Yes, 3 PM works perfectly. See you then!",
         "Let me check my calendar and get back to you.",
@@ -36,45 +64,24 @@ const WhatsAppAIDashboard = () => {
       autoReply: "Thanks for letting me know! 3 PM works for me. See you then!",
       aiSummary: "Meeting reschedule request for tomorrow at 3 PM"
     },
-    {
-      id: 2,
-      sender: "Friends Group",
-      phone: "+91 8462135789",
-      content: "Do not forget to take your Laptop Bag!, Everyone arrive early for Good impression.",
-      timestamp: new Date(Date.now() - 600000),
-      priority: "high",
-      category: "family",
-      sentiment: "positive",
+    2: {
+      priority: "high", category: "family", sentiment: "positive",
       suggestedReplies: [
-        "Thanks for reminding me!.",
+        "Thanks for reminding me!",
         "Will do! Love you bro ❤️",
-        "Keeping it right now!"
+        "Packing it right now!"
       ],
       autoReply: "Thanks Friend! I'll take my laptop bag. Love you too! ❤️",
       aiSummary: "Reminder to take laptop bag for meeting"
     },
-    {
-      id: 3,
-      sender: "LinkedIn Updates",
-      phone: "+1234567892",
-      content: "You have 5 new job recommendations based on your profile. Check them out now!",
-      timestamp: new Date(Date.now() - 900000),
-      priority: "low",
-      category: "marketing",
-      sentiment: "neutral",
+    3: {
+      priority: "low", category: "marketing", sentiment: "neutral",
       suggestedReplies: [],
       autoReply: null,
       aiSummary: "LinkedIn notification about job recommendations"
     },
-    {
-      id: 4,
-      sender: "Alex Chen - Client",
-      phone: "+040 9834567893",
-      content: "The payment for invoice #1067 has been processed. You should see it in 2-3 business days. Thanks for your excellent work!",
-      timestamp: new Date(Date.now() - 1200000),
-      priority: "medium",
-      category: "work",
-      sentiment: "positive",
+    4: {
+      priority: "medium", category: "work", sentiment: "positive",
       suggestedReplies: [
         "Thank you! Pleasure working with you.",
         "Great! Looking forward to our next project.",
@@ -83,13 +90,13 @@ const WhatsAppAIDashboard = () => {
       autoReply: "Thank you! Payment confirmation received. Pleasure working with you!",
       aiSummary: "Payment confirmation for invoice #1067"
     }
-  ];
+  };
 
   const sampleScheduled = [
     {
       id: 1,
       recipient: "Team Group",
-      phone: "+ 91 9988557456",
+      phone: "+91 9988557456",
       message: "Good morning team! Don't forget our Hackathon at 11 AM today.",
       scheduledDate: new Date(Date.now() + 86400000),
       repeat: "daily",
@@ -106,11 +113,69 @@ const WhatsAppAIDashboard = () => {
     }
   ];
 
-  useEffect(() => {
-    setMessages(sampleMessages);
-    setScheduledMessages(sampleScheduled);
+  // ---------- Gemini-powered AI analysis ----------
+  const processMessagesWithAI = useCallback(async () => {
+    setAiLoading(true);
+
+    if (!isGeminiAvailable()) {
+      // No API key → use hardcoded fallback
+      console.log("⚠️ No Gemini API key found. Using fallback data. Add VITE_GEMINI_API_KEY to .env");
+      const enriched = rawMessages.map(msg => ({
+        ...msg,
+        ...fallbackAI[msg.id]
+      }));
+      setMessages(enriched);
+
+      const fallbackSummary = `✨ Astra AI detected ${enriched.length} unread messages: ${enriched.filter(m => m.priority === 'high').length} high priority, ${enriched.filter(m => m.priority === 'medium').length} medium, and ${enriched.filter(m => m.priority === 'low').length} low. Key items: meeting reschedule from Ahmed, laptop bag reminder, and payment confirmation from client.`;
+      setOverallSummary(fallbackSummary);
+      setAiLoading(false);
+      return;
+    }
+
+    // ✅ Real Gemini AI — analyze every message
+    console.log("🚀 Gemini AI is active — analyzing messages...");
+
+    try {
+      const enrichedPromises = rawMessages.map(async (msg) => {
+        const aiResult = await analyzeMessage(msg.content, msg.sender);
+        if (aiResult) {
+          return {
+            ...msg,
+            priority: aiResult.priority || "medium",
+            category: aiResult.category || "other",
+            sentiment: aiResult.sentiment || "neutral",
+            suggestedReplies: aiResult.suggestedReplies || [],
+            autoReply: aiResult.autoReply || null,
+            aiSummary: aiResult.aiSummary || "No summary available",
+          };
+        }
+        // If single message AI fails, use fallback for that message
+        return { ...msg, ...fallbackAI[msg.id] };
+      });
+
+      const enriched = await Promise.all(enrichedPromises);
+      setMessages(enriched);
+
+      // Generate inbox overview with Gemini
+      const summary = await generateInboxSummary(enriched);
+      setOverallSummary(summary || `✨ Astra AI analyzed ${enriched.length} messages with Google Gemini.`);
+    } catch (err) {
+      console.error("Gemini processing error:", err);
+      // Fallback on total failure
+      const enriched = rawMessages.map(msg => ({ ...msg, ...fallbackAI[msg.id] }));
+      setMessages(enriched);
+      setOverallSummary("✨ AI analysis temporarily unavailable. Showing cached insights.");
+    }
+
+    setAiLoading(false);
   }, []);
 
+  useEffect(() => {
+    processMessagesWithAI();
+    setScheduledMessages(sampleScheduled);
+  }, [processMessagesWithAI]);
+
+  // ---------- Filtering & helpers ----------
   const filteredMessages = messages.filter(msg => {
     if (filter === 'all') return true;
     return msg.priority === filter;
@@ -137,11 +202,7 @@ const WhatsAppAIDashboard = () => {
   const handleQuickReply = (reply, sender) => {
     const option = confirm(`Schedule this reply to ${sender}?\n\n"${reply}"\n\nClick OK to schedule, Cancel to send now.`);
     if (option) {
-      setScheduleForm({
-        ...scheduleForm,
-        recipient: sender,
-        message: reply
-      });
+      setScheduleForm({ ...scheduleForm, recipient: sender, message: reply });
       setShowScheduleModal(true);
     } else {
       alert(`Sending now: "${reply}"`);
@@ -166,13 +227,7 @@ const WhatsAppAIDashboard = () => {
     };
     setScheduledMessages([...scheduledMessages, newScheduled]);
     setShowScheduleModal(false);
-    setScheduleForm({
-      recipient: '',
-      message: '',
-      date: '',
-      time: '',
-      repeat: 'none'
-    });
+    setScheduleForm({ recipient: '', message: '', date: '', time: '', repeat: 'none' });
     alert('Message scheduled successfully!');
   };
 
@@ -188,21 +243,22 @@ const WhatsAppAIDashboard = () => {
     scheduled: scheduledMessages.length
   };
 
-  const overallSummary = `✨ Astral AI detected ${stats.total} unread messages: ${stats.high} high priority (requiring immediate attention), ${stats.medium} medium priority, and ${stats.low} low priority. 
-  Key items:
-   "~ Meeting reschedule request from Ahmed,
-    ~ Reminder to take laptop bag, 
-    ~ and Payment Confirmation from client."`;
-
+  // ---------- Render ----------
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
+
         {/* Header */}
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Sparkles className="w-8 h-8 text-violet-600" />
-              <h1 className="text-3xl font-bold text-gray-800"> Astra AI</h1>
+              <h1 className="text-3xl font-bold text-gray-800">Astra AI</h1>
+              {isGeminiAvailable() && (
+                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full">
+                  Powered by Gemini
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -250,8 +306,8 @@ const WhatsAppAIDashboard = () => {
               <button
                 onClick={() => setActiveTab('inbox')}
                 className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
-                  activeTab === 'inbox' 
-                    ? 'bg-green-600 text-white' 
+                  activeTab === 'inbox'
+                    ? 'bg-green-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -261,8 +317,8 @@ const WhatsAppAIDashboard = () => {
               <button
                 onClick={() => setActiveTab('scheduled')}
                 className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
-                  activeTab === 'scheduled' 
-                    ? 'bg-green-600 text-white' 
+                  activeTab === 'scheduled'
+                    ? 'bg-green-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -283,16 +339,34 @@ const WhatsAppAIDashboard = () => {
         {/* Inbox Tab */}
         {activeTab === 'inbox' && (
           <>
-            {/* Overall Summary */}
-            <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg shadow-lg p-6 mb-6 text-white">
-              <div className="flex items-start gap-3">
-                <Sparkles className="w-6 h-6 mt-1 flex-shrink-0" />
-                <div>
-                  <h2 className="text-xl font-bold mb-2">AI Summary</h2>
-                  <p className="text-white/90">{overallSummary}</p>
+            {/* AI Loading Indicator */}
+            {aiLoading && (
+              <div className="bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg shadow-lg p-6 mb-6 text-white">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <div>
+                    <h2 className="text-lg font-bold">Gemini AI is analyzing your messages…</h2>
+                    <p className="text-white/80 text-sm">Summarizing, classifying priority, generating smart replies</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Overall AI Summary */}
+            {!aiLoading && overallSummary && (
+              <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg shadow-lg p-6 mb-6 text-white">
+                <div className="flex items-start gap-3">
+                  <Sparkles className="w-6 h-6 mt-1 flex-shrink-0" />
+                  <div>
+                    <h2 className="text-xl font-bold mb-2">
+                      AI Summary
+                      {isGeminiAvailable() && <span className="ml-2 text-sm font-normal opacity-80">— by Google Gemini</span>}
+                    </h2>
+                    <p className="text-white/90">{overallSummary}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Filter */}
             <div className="bg-white rounded-lg shadow p-4 mb-6">
@@ -304,8 +378,8 @@ const WhatsAppAIDashboard = () => {
                       key={f}
                       onClick={() => setFilter(f)}
                       className={`px-4 py-2 rounded-lg font-medium transition ${
-                        filter === f 
-                          ? 'bg-green-600 text-white' 
+                        filter === f
+                          ? 'bg-green-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
                     >
@@ -334,30 +408,37 @@ const WhatsAppAIDashboard = () => {
                     <div className="flex items-center gap-2 text-green-100 text-sm">
                       <Clock className="w-4 h-4" />
                       {msg.timestamp.toLocaleTimeString()}
+                      {msg.sentiment && (
+                        <span className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs">
+                          {msg.sentiment === 'positive' ? '😊' : msg.sentiment === 'negative' ? '😟' : '😐'} {msg.sentiment}
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   {/* Message Content */}
                   <div className="p-4">
                     <p className="text-gray-700 mb-4">{msg.content}</p>
-                    
+
                     {/* AI Summary */}
                     <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
                       <div className="flex items-start gap-2">
                         <TrendingUp className="w-4 h-4 text-purple-600 mt-0.5" />
                         <div>
-                          <div className="text-xs font-bold text-purple-800 mb-1">AI INSIGHT</div>
+                          <div className="text-xs font-bold text-purple-800 mb-1">
+                            AI INSIGHT {isGeminiAvailable() && <span className="font-normal text-purple-500">· Gemini</span>}
+                          </div>
                           <div className="text-sm text-purple-900">{msg.aiSummary}</div>
                         </div>
                       </div>
                     </div>
 
                     {/* Suggested Replies */}
-                    {msg.suggestedReplies.length > 0 && (
+                    {msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
                       <div className="space-y-2">
                         <div className="text-sm font-bold text-gray-700 flex items-center gap-2">
                           <Sparkles className="w-4 h-4 text-yellow-500" />
-                          Quick Replies
+                          Quick Replies {isGeminiAvailable() && <span className="font-normal text-gray-400 text-xs">AI-generated</span>}
                         </div>
                         {msg.suggestedReplies.map((reply, idx) => (
                           <button
@@ -428,7 +509,7 @@ const WhatsAppAIDashboard = () => {
                     <button className="p-2 hover:bg-gray-100 rounded-lg transition">
                       <Edit className="w-5 h-5 text-gray-600" />
                     </button>
-                    <button 
+                    <button
                       onClick={() => deleteScheduled(msg.id)}
                       className="p-2 hover:bg-red-100 rounded-lg transition"
                     >
