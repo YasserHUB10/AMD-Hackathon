@@ -1,170 +1,163 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MessageCircle, Zap, Clock, CheckCircle, Send, Sparkles, Filter, TrendingUp, Calendar, Plus, X, Edit, Loader2 } from 'lucide-react';
+import { MessageCircle, Zap, Calendar, Plus, Sparkles, Github, Linkedin } from 'lucide-react';
 import { analyzeMessage, generateInboxSummary, initGemini, isGeminiAvailable } from './gemini';
 
-const WhatsAppAIDashboard = () => {
+import { ThemeProvider, ThemeToggle } from './components/ThemeToggle';
+import { ToastContainer, toast } from './components/Toast';
+import StatsBar from './components/StatsBar';
+import FilterBar from './components/FilterBar';
+import { AILoadingBanner, AISummaryBanner } from './components/AISummaryBanner';
+import MessageCard from './components/MessageCard';
+import SkeletonCard from './components/SkeletonCard';
+import ScheduleModal from './components/ScheduleModal';
+import ScheduledList from './components/ScheduledList';
+
+// ─── Constants (outside component to avoid re-creation) ─────────────
+const RAW_MESSAGES = [
+  {
+    id: 1,
+    sender: 'Ahmed',
+    phone: '+91 8885536667',
+    content: "Hi! Can we reschedule tomorrow's meeting to 3 PM? Something urgent came up.",
+    timestamp: new Date(Date.now() - 300000),
+  },
+  {
+    id: 2,
+    sender: 'Friends Group',
+    phone: '+91 8462135789',
+    content: 'Do not forget to take your Laptop Bag! Everyone arrive early for good impression.',
+    timestamp: new Date(Date.now() - 600000),
+  },
+  {
+    id: 3,
+    sender: 'LinkedIn Updates',
+    phone: '+1234567892',
+    content: 'You have 5 new job recommendations based on your profile. Check them out now!',
+    timestamp: new Date(Date.now() - 900000),
+  },
+  {
+    id: 4,
+    sender: 'Alex Chen - Client',
+    phone: '+040 9834567893',
+    content: 'The payment for invoice #1067 has been processed. You should see it in 2-3 business days. Thanks for your excellent work!',
+    timestamp: new Date(Date.now() - 1200000),
+  },
+];
+
+const FALLBACK_AI = {
+  1: {
+    priority: 'high', category: 'work', sentiment: 'neutral',
+    suggestedReplies: [
+      'Yes, 3 PM works perfectly. See you then!',
+      'Let me check my calendar and get back to you.',
+      "Unfortunately I have a conflict at 3 PM. How about 4 PM?",
+    ],
+    autoReply: 'Thanks for letting me know! 3 PM works for me. See you then!',
+    aiSummary: 'Meeting reschedule request for tomorrow at 3 PM',
+  },
+  2: {
+    priority: 'high', category: 'family', sentiment: 'positive',
+    suggestedReplies: [
+      'Thanks for reminding me!',
+      'Will do! Love you bro ❤️',
+      'Packing it right now!',
+    ],
+    autoReply: "Thanks Friend! I'll take my laptop bag. Love you too! ❤️",
+    aiSummary: 'Reminder to take laptop bag for meeting',
+  },
+  3: {
+    priority: 'low', category: 'marketing', sentiment: 'neutral',
+    suggestedReplies: [],
+    autoReply: null,
+    aiSummary: 'LinkedIn notification about job recommendations',
+  },
+  4: {
+    priority: 'medium', category: 'work', sentiment: 'positive',
+    suggestedReplies: [
+      'Thank you! Pleasure working with you.',
+      'Great! Looking forward to our next project.',
+      'Received, thanks for the update!',
+    ],
+    autoReply: 'Thank you! Payment confirmation received. Pleasure working with you!',
+    aiSummary: 'Payment confirmation for invoice #1067',
+  },
+};
+
+const SAMPLE_SCHEDULED = [
+  {
+    id: 1,
+    recipient: 'Team Group',
+    phone: '+91 9988557456',
+    message: "Good morning team! Don't forget our Hackathon at 11 AM today.",
+    scheduledDate: new Date(Date.now() + 86400000),
+    repeat: 'daily',
+    status: 'pending',
+  },
+  {
+    id: 2,
+    recipient: 'Mom',
+    phone: '+91 9638527410',
+    message: 'Happy Birthday Mom! Hope you have an amazing day! 🎉🎂',
+    scheduledDate: new Date(Date.now() + 172800000),
+    repeat: 'yearly',
+    status: 'pending',
+  },
+];
+
+// ─── Main Dashboard Component ───────────────────────────────────────
+function AstraAIDashboard() {
   const [messages, setMessages] = useState([]);
-  const [scheduledMessages, setScheduledMessages] = useState([]);
-  const [selectedMsg, setSelectedMsg] = useState(null);
+  const [scheduledMessages, setScheduledMessages] = useState(SAMPLE_SCHEDULED);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('inbox');
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [schedulePrefill, setSchedulePrefill] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [overallSummary, setOverallSummary] = useState('');
-  const [scheduleForm, setScheduleForm] = useState({
-    recipient: '',
-    message: '',
-    date: '',
-    time: '',
-    repeat: 'none'
-  });
 
-  // Raw messages — AI fields will be filled by Gemini
-  const rawMessages = [
-    {
-      id: 1,
-      sender: "Ahmed",
-      phone: "+91 8885536667",
-      content: "Hi! Can we reschedule tomorrow's meeting to 3 PM? Something urgent came up.",
-      timestamp: new Date(Date.now() - 300000),
-    },
-    {
-      id: 2,
-      sender: "Friends Group",
-      phone: "+91 8462135789",
-      content: "Do not forget to take your Laptop Bag! Everyone arrive early for good impression.",
-      timestamp: new Date(Date.now() - 600000),
-    },
-    {
-      id: 3,
-      sender: "LinkedIn Updates",
-      phone: "+1234567892",
-      content: "You have 5 new job recommendations based on your profile. Check them out now!",
-      timestamp: new Date(Date.now() - 900000),
-    },
-    {
-      id: 4,
-      sender: "Alex Chen - Client",
-      phone: "+040 9834567893",
-      content: "The payment for invoice #1067 has been processed. You should see it in 2-3 business days. Thanks for your excellent work!",
-      timestamp: new Date(Date.now() - 1200000),
-    }
-  ];
-
-  // Hardcoded fallback data (used when Gemini API key is not set)
-  const fallbackAI = {
-    1: {
-      priority: "high", category: "work", sentiment: "neutral",
-      suggestedReplies: [
-        "Yes, 3 PM works perfectly. See you then!",
-        "Let me check my calendar and get back to you.",
-        "Unfortunately I have a conflict at 3 PM. How about 4 PM?"
-      ],
-      autoReply: "Thanks for letting me know! 3 PM works for me. See you then!",
-      aiSummary: "Meeting reschedule request for tomorrow at 3 PM"
-    },
-    2: {
-      priority: "high", category: "family", sentiment: "positive",
-      suggestedReplies: [
-        "Thanks for reminding me!",
-        "Will do! Love you bro ❤️",
-        "Packing it right now!"
-      ],
-      autoReply: "Thanks Friend! I'll take my laptop bag. Love you too! ❤️",
-      aiSummary: "Reminder to take laptop bag for meeting"
-    },
-    3: {
-      priority: "low", category: "marketing", sentiment: "neutral",
-      suggestedReplies: [],
-      autoReply: null,
-      aiSummary: "LinkedIn notification about job recommendations"
-    },
-    4: {
-      priority: "medium", category: "work", sentiment: "positive",
-      suggestedReplies: [
-        "Thank you! Pleasure working with you.",
-        "Great! Looking forward to our next project.",
-        "Received, thanks for the update!"
-      ],
-      autoReply: "Thank you! Payment confirmation received. Pleasure working with you!",
-      aiSummary: "Payment confirmation for invoice #1067"
-    }
-  };
-
-  const sampleScheduled = [
-    {
-      id: 1,
-      recipient: "Team Group",
-      phone: "+91 9988557456",
-      message: "Good morning team! Don't forget our Hackathon at 11 AM today.",
-      scheduledDate: new Date(Date.now() + 86400000),
-      repeat: "daily",
-      status: "pending"
-    },
-    {
-      id: 2,
-      recipient: "Mom",
-      phone: "+91 9638527410",
-      message: "Happy Birthday Mom! Hope you have an amazing day! 🎉🎂",
-      scheduledDate: new Date(Date.now() + 172800000),
-      repeat: "yearly",
-      status: "pending"
-    }
-  ];
-
-  // ---------- Gemini-powered AI analysis ----------
+  // ─── Gemini AI analysis ──────────────────────────────────────────
   const processMessagesWithAI = useCallback(async () => {
     setAiLoading(true);
 
     if (!isGeminiAvailable()) {
-      // No API key → use hardcoded fallback
-      console.log("⚠️ No Gemini API key found. Using fallback data. Add VITE_GEMINI_API_KEY to .env");
-      const enriched = rawMessages.map(msg => ({
-        ...msg,
-        ...fallbackAI[msg.id]
-      }));
+      const enriched = RAW_MESSAGES.map((msg) => ({ ...msg, ...FALLBACK_AI[msg.id] }));
       setMessages(enriched);
-
-      const fallbackSummary = `✨ Astra AI detected ${enriched.length} unread messages: ${enriched.filter(m => m.priority === 'high').length} high priority, ${enriched.filter(m => m.priority === 'medium').length} medium, and ${enriched.filter(m => m.priority === 'low').length} low. Key items: meeting reschedule from Ahmed, laptop bag reminder, and payment confirmation from client.`;
-      setOverallSummary(fallbackSummary);
+      setOverallSummary(
+        `Astra AI detected ${enriched.length} unread messages: ${enriched.filter((m) => m.priority === 'high').length} high priority, ${enriched.filter((m) => m.priority === 'medium').length} medium, and ${enriched.filter((m) => m.priority === 'low').length} low. Key items: meeting reschedule from Ahmed, laptop bag reminder, and payment confirmation from client.`
+      );
       setAiLoading(false);
       return;
     }
 
-    // ✅ Real Gemini AI — analyze every message
-    console.log("🚀 Gemini AI is active — analyzing messages...");
-
     try {
-      const enrichedPromises = rawMessages.map(async (msg) => {
+      const enrichedPromises = RAW_MESSAGES.map(async (msg) => {
         const aiResult = await analyzeMessage(msg.content, msg.sender);
         if (aiResult) {
           return {
             ...msg,
-            priority: aiResult.priority || "medium",
-            category: aiResult.category || "other",
-            sentiment: aiResult.sentiment || "neutral",
+            priority: aiResult.priority || 'medium',
+            category: aiResult.category || 'other',
+            sentiment: aiResult.sentiment || 'neutral',
             suggestedReplies: aiResult.suggestedReplies || [],
             autoReply: aiResult.autoReply || null,
-            aiSummary: aiResult.aiSummary || "No summary available",
+            aiSummary: aiResult.aiSummary || 'No summary available',
           };
         }
-        // If single message AI fails, use fallback for that message
-        return { ...msg, ...fallbackAI[msg.id] };
+        return { ...msg, ...FALLBACK_AI[msg.id] };
       });
 
       const enriched = await Promise.all(enrichedPromises);
       setMessages(enriched);
 
-      // Generate inbox overview with Gemini
       const summary = await generateInboxSummary(enriched);
-      setOverallSummary(summary || `✨ Astra AI analyzed ${enriched.length} messages with Google Gemini.`);
+      setOverallSummary(summary || `Astra AI analyzed ${enriched.length} messages with Google Gemini.`);
     } catch (err) {
-      console.error("Gemini processing error:", err);
-      // Fallback on total failure
-      const enriched = rawMessages.map(msg => ({ ...msg, ...fallbackAI[msg.id] }));
+      console.error('Gemini processing error:', err);
+      const enriched = RAW_MESSAGES.map((msg) => ({ ...msg, ...FALLBACK_AI[msg.id] }));
       setMessages(enriched);
-      setOverallSummary("✨ AI analysis temporarily unavailable. Showing cached insights.");
+      setOverallSummary('AI analysis temporarily unavailable. Showing cached insights.');
     }
 
     setAiLoading(false);
@@ -173,459 +166,230 @@ const WhatsAppAIDashboard = () => {
   useEffect(() => {
     initGemini();
     processMessagesWithAI();
-    setScheduledMessages(sampleScheduled);
   }, [processMessagesWithAI]);
 
-  // ---------- Filtering & helpers ----------
-  const filteredMessages = messages.filter(msg => {
-    if (filter === 'all') return true;
-    return msg.priority === filter;
+  // ─── Filtering ───────────────────────────────────────────────────
+  const filteredMessages = messages.filter((msg) => {
+    const matchesFilter = filter === 'all' || msg.priority === filter;
+    const matchesSearch =
+      !searchQuery ||
+      msg.sender.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      msg.content.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesFilter && matchesSearch;
   });
 
-  const getPriorityColor = (priority) => {
-    switch(priority) {
-      case 'high': return 'bg-red-100 text-red-800 border-red-300';
-      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'low': return 'bg-gray-100 text-gray-800 border-gray-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
+  // ─── Handlers ────────────────────────────────────────────────────
+  const handleScheduleReply = (recipient, message) => {
+    setSchedulePrefill({ recipient, message });
+    setShowScheduleModal(true);
   };
 
-  const getCategoryIcon = (category) => {
-    switch(category) {
-      case 'work': return '💼';
-      case 'family': return '👨‍👩‍👧‍👦';
-      case 'marketing': return '📢';
-      default: return '💬';
-    }
+  const handleAddScheduled = (newMsg) => {
+    setScheduledMessages((prev) => [...prev, { ...newMsg, id: Date.now() }]);
   };
 
-  const handleQuickReply = (reply, sender) => {
-    const option = confirm(`Schedule this reply to ${sender}?\n\n"${reply}"\n\nClick OK to schedule, Cancel to send now.`);
-    if (option) {
-      setScheduleForm({ ...scheduleForm, recipient: sender, message: reply });
-      setShowScheduleModal(true);
-    } else {
-      alert(`Sending now: "${reply}"`);
-    }
+  const handleDeleteScheduled = (id) => {
+    setScheduledMessages((prev) => prev.filter((m) => m.id !== id));
+    toast.info('Scheduled message deleted');
   };
 
-  const handleAutoReply = (msg) => {
-    if (msg.autoReply) {
-      alert(`Auto-reply sent: "${msg.autoReply}"`);
-    }
+  const handleEditScheduled = (msg) => {
+    setSchedulePrefill({ recipient: msg.recipient, message: msg.message });
+    setShowScheduleModal(true);
   };
 
-  const handleScheduleMessage = (e) => {
-    e.preventDefault();
-    const newScheduled = {
-      id: scheduledMessages.length + 1,
-      recipient: scheduleForm.recipient,
-      message: scheduleForm.message,
-      scheduledDate: new Date(`${scheduleForm.date}T${scheduleForm.time}`),
-      repeat: scheduleForm.repeat,
-      status: 'pending'
-    };
-    setScheduledMessages([...scheduledMessages, newScheduled]);
-    setShowScheduleModal(false);
-    setScheduleForm({ recipient: '', message: '', date: '', time: '', repeat: 'none' });
-    alert('Message scheduled successfully!');
-  };
-
-  const deleteScheduled = (id) => {
-    setScheduledMessages(scheduledMessages.filter(msg => msg.id !== id));
+  const handleDismissMessage = (id) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+    toast.info('Message dismissed');
   };
 
   const stats = {
     total: messages.length,
-    high: messages.filter(m => m.priority === 'high').length,
-    medium: messages.filter(m => m.priority === 'medium').length,
-    low: messages.filter(m => m.priority === 'low').length,
-    scheduled: scheduledMessages.length
+    high: messages.filter((m) => m.priority === 'high').length,
+    medium: messages.filter((m) => m.priority === 'medium').length,
+    low: messages.filter((m) => m.priority === 'low').length,
+    scheduled: scheduledMessages.length,
   };
 
-  // ---------- Render ----------
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 dark:from-gray-900 dark:to-gray-950 transition-colors duration-300">
+      {/* Skip navigation */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-4 focus:py-2 focus:bg-green-600 focus:text-white focus:rounded-lg"
+      >
+        Skip to main content
+      </a>
 
-        {/* Header */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
+      <div className="max-w-7xl mx-auto p-4 sm:p-6" id="main-content">
+        {/* ─── Header ────────────────────────────────────────────── */}
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 mb-6 border border-gray-100 dark:border-gray-700 transition-colors duration-200">
+          <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
-              <Sparkles className="w-8 h-8 text-violet-600" />
-              <h1 className="text-3xl font-bold text-gray-800">Astra AI</h1>
+              <Sparkles className="w-8 h-8 text-violet-600 dark:text-violet-400" />
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 dark:text-gray-100">Astra AI</h1>
               {isGeminiAvailable() && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full">
+                <span className="hidden sm:inline px-2.5 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold rounded-full">
                   Powered by Gemini
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <ThemeToggle />
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={autoReplyEnabled}
                   onChange={(e) => setAutoReplyEnabled(e.target.checked)}
-                  className="w-5 h-5"
+                  className="w-5 h-5 rounded accent-green-600"
                 />
-                <span className="text-sm font-medium">Auto-Reply</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:inline">Auto-Reply</span>
               </label>
-              <Zap className={autoReplyEnabled ? "text-yellow-500" : "text-gray-400"} />
+              <Zap className={`w-5 h-5 transition-colors ${autoReplyEnabled ? 'text-yellow-500' : 'text-gray-400 dark:text-gray-600'}`} />
             </div>
           </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-5 gap-4">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <div className="text-2xl font-bold text-blue-600">{stats.total}</div>
-              <div className="text-sm text-blue-800">Total Messages</div>
-            </div>
-            <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-              <div className="text-2xl font-bold text-red-600">{stats.high}</div>
-              <div className="text-sm text-red-800">High Priority</div>
-            </div>
-            <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-              <div className="text-2xl font-bold text-yellow-600">{stats.medium}</div>
-              <div className="text-sm text-yellow-800">Medium Priority</div>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <div className="text-2xl font-bold text-gray-600">{stats.low}</div>
-              <div className="text-sm text-gray-800">Low Priority</div>
-            </div>
-            <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-              <div className="text-2xl font-bold text-purple-600">{stats.scheduled}</div>
-              <div className="text-sm text-purple-800">Scheduled</div>
-            </div>
-          </div>
+          <StatsBar stats={stats} />
         </div>
 
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <div className="flex items-center justify-between">
+        {/* ─── Tab Navigation ────────────────────────────────────── */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4 mb-6 transition-colors duration-200">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex gap-2">
               <button
                 onClick={() => setActiveTab('inbox')}
-                className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
+                className={`px-5 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 text-sm ${
                   activeTab === 'inbox'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    ? 'bg-green-600 text-white shadow-sm'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
-                <MessageCircle className="w-5 h-5" />
+                <MessageCircle className="w-4 h-4" />
                 Inbox
               </button>
               <button
                 onClick={() => setActiveTab('scheduled')}
-                className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
+                className={`px-5 py-2.5 rounded-lg font-medium transition-all duration-200 flex items-center gap-2 text-sm ${
                   activeTab === 'scheduled'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    ? 'bg-green-600 text-white shadow-sm'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
-                <Calendar className="w-5 h-5" />
+                <Calendar className="w-4 h-4" />
                 Scheduled ({stats.scheduled})
               </button>
             </div>
             <button
-              onClick={() => setShowScheduleModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2 font-medium"
+              onClick={() => {
+                setSchedulePrefill(null);
+                setShowScheduleModal(true);
+              }}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all duration-200 flex items-center gap-2 font-medium text-sm shadow-sm hover:shadow"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               Schedule Message
             </button>
           </div>
         </div>
 
-        {/* Inbox Tab */}
+        {/* ─── Inbox Tab ─────────────────────────────────────────── */}
         {activeTab === 'inbox' && (
           <>
-            {/* AI Loading Indicator */}
+            {aiLoading && <AILoadingBanner />}
+            {!aiLoading && overallSummary && <AISummaryBanner summary={overallSummary} />}
+
+            <FilterBar filter={filter} setFilter={setFilter} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+
+            {/* Skeleton loading */}
             {aiLoading && (
-              <div className="bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg shadow-lg p-6 mb-6 text-white">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  <div>
-                    <h2 className="text-lg font-bold">Gemini AI is analyzing your messages…</h2>
-                    <p className="text-white/80 text-sm">Summarizing, classifying priority, generating smart replies</p>
-                  </div>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}
               </div>
             )}
 
-            {/* Overall AI Summary */}
-            {!aiLoading && overallSummary && (
-              <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg shadow-lg p-6 mb-6 text-white">
-                <div className="flex items-start gap-3">
-                  <Sparkles className="w-6 h-6 mt-1 flex-shrink-0" />
-                  <div>
-                    <h2 className="text-xl font-bold mb-2">
-                      AI Summary
-                      {isGeminiAvailable() && <span className="ml-2 text-sm font-normal opacity-80">— by Google Gemini</span>}
-                    </h2>
-                    <p className="text-white/90">{overallSummary}</p>
+            {/* Messages */}
+            {!aiLoading && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {filteredMessages.map((msg) => (
+                  <MessageCard
+                    key={msg.id}
+                    msg={msg}
+                    autoReplyEnabled={autoReplyEnabled}
+                    onScheduleReply={handleScheduleReply}
+                    onDismiss={handleDismissMessage}
+                  />
+                ))}
+                {filteredMessages.length === 0 && (
+                  <div className="col-span-full text-center py-12">
+                    <MessageCircle className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
+                    <p className="text-gray-500 dark:text-gray-400 font-medium">No messages match your filters</p>
                   </div>
-                </div>
+                )}
               </div>
             )}
-
-            {/* Filter */}
-            <div className="bg-white rounded-lg shadow p-4 mb-6">
-              <div className="flex items-center gap-3">
-                <Filter className="w-5 h-5 text-gray-600" />
-                <div className="flex gap-2">
-                  {['all', 'high', 'medium', 'low'].map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setFilter(f)}
-                      className={`px-4 py-2 rounded-lg font-medium transition ${
-                        filter === f
-                          ? 'bg-green-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Messages Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {filteredMessages.map(msg => (
-                <div key={msg.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
-                  {/* Message Header */}
-                  <div className="bg-gradient-to-r from-green-600 to-green-500 p-4 text-white">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{getCategoryIcon(msg.category)}</span>
-                        <h3 className="font-bold text-lg">{msg.sender}</h3>
-                      </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${getPriorityColor(msg.priority)} bg-white`}>
-                        {msg.priority.toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-green-100 text-sm">
-                      <Clock className="w-4 h-4" />
-                      {msg.timestamp.toLocaleTimeString()}
-                      {msg.sentiment && (
-                        <span className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs">
-                          {msg.sentiment === 'positive' ? '😊' : msg.sentiment === 'negative' ? '😟' : '😐'} {msg.sentiment}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Message Content */}
-                  <div className="p-4">
-                    <p className="text-gray-700 mb-4">{msg.content}</p>
-
-                    {/* AI Summary */}
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
-                      <div className="flex items-start gap-2">
-                        <TrendingUp className="w-4 h-4 text-purple-600 mt-0.5" />
-                        <div>
-                          <div className="text-xs font-bold text-purple-800 mb-1">
-                            AI INSIGHT {isGeminiAvailable() && <span className="font-normal text-purple-500">· Gemini</span>}
-                          </div>
-                          <div className="text-sm text-purple-900">{msg.aiSummary}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Suggested Replies */}
-                    {msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-yellow-500" />
-                          Quick Replies {isGeminiAvailable() && <span className="font-normal text-gray-400 text-xs">AI-generated</span>}
-                        </div>
-                        {msg.suggestedReplies.map((reply, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => handleQuickReply(reply, msg.sender)}
-                            className="w-full text-left p-3 bg-gray-50 hover:bg-green-50 border border-gray-200 hover:border-green-300 rounded-lg text-sm transition group"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-700 group-hover:text-green-700">{reply}</span>
-                              <Send className="w-4 h-4 text-gray-400 group-hover:text-green-600" />
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Auto Reply */}
-                    {msg.autoReply && autoReplyEnabled && (
-                      <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="text-xs font-bold text-green-800 mb-1">AUTO-REPLY</div>
-                            <div className="text-sm text-green-900">{msg.autoReply}</div>
-                          </div>
-                          <button
-                            onClick={() => handleAutoReply(msg)}
-                            className="ml-3 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                            Send
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
           </>
         )}
 
-        {/* Scheduled Tab */}
+        {/* ─── Scheduled Tab ─────────────────────────────────────── */}
         {activeTab === 'scheduled' && (
-          <div className="space-y-4">
-            {scheduledMessages.map(msg => (
-              <div key={msg.id} className="bg-white rounded-lg shadow-lg p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Calendar className="w-5 h-5 text-purple-600" />
-                      <h3 className="font-bold text-lg text-gray-800">{msg.recipient}</h3>
-                      <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold">
-                        {msg.repeat.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-gray-700 mb-3 pl-8">{msg.message}</p>
-                    <div className="flex items-center gap-4 text-sm text-gray-600 pl-8">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        {msg.scheduledDate.toLocaleString()}
-                      </div>
-                      <div className="px-2 py-1 bg-green-100 text-green-700 rounded">
-                        {msg.status}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button className="p-2 hover:bg-gray-100 rounded-lg transition">
-                      <Edit className="w-5 h-5 text-gray-600" />
-                    </button>
-                    <button
-                      onClick={() => deleteScheduled(msg.id)}
-                      className="p-2 hover:bg-red-100 rounded-lg transition"
-                    >
-                      <X className="w-5 h-5 text-red-600" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {scheduledMessages.length === 0 && (
-              <div className="bg-white rounded-lg shadow-lg p-12 text-center">
-                <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-gray-600 mb-2">No Scheduled Messages</h3>
-                <p className="text-gray-500">Click "Schedule Message" to create your first scheduled message</p>
-              </div>
-            )}
-          </div>
+          <ScheduledList
+            scheduledMessages={scheduledMessages}
+            onDelete={handleDeleteScheduled}
+            onEdit={handleEditScheduled}
+          />
         )}
 
-        {/* Schedule Modal */}
-        {showScheduleModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">Schedule Message</h2>
-                <button
-                  onClick={() => setShowScheduleModal(false)}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition"
-                >
-                  <X className="w-6 h-6 text-gray-600" />
-                </button>
-              </div>
-              <form onSubmit={handleScheduleMessage} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Recipient
-                  </label>
-                  <input
-                    type="text"
-                    value={scheduleForm.recipient}
-                    onChange={(e) => setScheduleForm({...scheduleForm, recipient: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter name or number"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Message
-                  </label>
-                  <textarea
-                    value={scheduleForm.message}
-                    onChange={(e) => setScheduleForm({...scheduleForm, message: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    rows="4"
-                    placeholder="Type your message..."
-                    required
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Date
-                    </label>
-                    <input
-                      type="date"
-                      value={scheduleForm.date}
-                      onChange={(e) => setScheduleForm({...scheduleForm, date: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Time
-                    </label>
-                    <input
-                      type="time"
-                      value={scheduleForm.time}
-                      onChange={(e) => setScheduleForm({...scheduleForm, time: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Repeat
-                  </label>
-                  <select
-                    value={scheduleForm.repeat}
-                    onChange={(e) => setScheduleForm({...scheduleForm, repeat: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  >
-                    <option value="none">None</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-                <button
-                  type="submit"
-                  className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium flex items-center justify-center gap-2"
-                >
-                  <Calendar className="w-5 h-5" />
-                  Schedule Message
-                </button>
-              </form>
-            </div>
+        {/* ─── Schedule Modal ────────────────────────────────────── */}
+        <ScheduleModal
+          show={showScheduleModal}
+          onClose={() => {
+            setShowScheduleModal(false);
+            setSchedulePrefill(null);
+          }}
+          onSchedule={handleAddScheduled}
+          prefill={schedulePrefill}
+        />
+
+        {/* ─── Footer ────────────────────────────────────────────── */}
+        <footer className="mt-12 pb-6 text-center border-t border-gray-200 dark:border-gray-700 pt-6">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Built by <span className="font-semibold text-gray-700 dark:text-gray-300">Yasser</span> — AMD Hackathon 2026
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Powered by Google Gemini AI · React + Vite + Tailwind CSS
+          </p>
+          <div className="flex items-center justify-center gap-4 mt-3">
+            <a
+              href="https://github.com/YasserHUB10"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition"
+              aria-label="GitHub profile"
+            >
+              <Github className="w-5 h-5" />
+            </a>
+            <a
+              href="https://linkedin.com/in/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition"
+              aria-label="LinkedIn profile"
+            >
+              <Linkedin className="w-5 h-5" />
+            </a>
           </div>
-        )}
+        </footer>
       </div>
+
+      <ToastContainer />
     </div>
   );
-};
+}
 
-export default WhatsAppAIDashboard;
+// ─── Root export with ThemeProvider ──────────────────────────────────
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AstraAIDashboard />
+    </ThemeProvider>
+  );
+}
