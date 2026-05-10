@@ -269,6 +269,8 @@ function Dashboard({ onBack }) {
           </div>
         </section>
       </div>
+
+      <ToastContainer />
     </div>
   );
 }
