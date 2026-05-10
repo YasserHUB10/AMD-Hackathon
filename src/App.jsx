@@ -1,631 +1,303 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { MessageCircle, Zap, Clock, CheckCircle, Send, Sparkles, Filter, TrendingUp, Calendar, Plus, X, Edit, Loader2 } from 'lucide-react';
-import { analyzeMessage, generateInboxSummary, initGemini, isGeminiAvailable } from './gemini';
+import { useEffect, useState } from 'react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Brain,
+  CheckCircle2,
+  Loader2,
+  MessageCircle,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+  Webhook,
+} from 'lucide-react';
+import './App.css';
 
-const WhatsAppAIDashboard = () => {
+import Hero from './components/Hero.jsx';
+import HowItWorks from './components/HowItWorks.jsx';
+import Features from './components/Features.jsx';
+import InteractiveDemo from './components/InteractiveDemo.jsx';
+import Footer from './components/Footer.jsx';
+
+/* ───── helpers ───── */
+
+function formatTimestamp(value) {
+  try { return new Date(value).toLocaleString(); } catch { return value; }
+}
+
+const priorityColors = {
+  high:   { dot: 'bg-red-500',    badge: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  medium: { dot: 'bg-yellow-500', badge: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' },
+  low:    { dot: 'bg-stone-500',  badge: 'bg-stone-500/10 text-stone-400 border-stone-500/20' },
+};
+const sentimentEmoji = { positive: '😊', negative: '😟', neutral: '😐', urgent: '🚨' };
+
+const emptyCompose = { to: '', message: '' };
+
+/* ───── Dashboard (existing, enhanced) ───── */
+
+function Dashboard({ onBack }) {
+  const [status, setStatus]     = useState(null);
   const [messages, setMessages] = useState([]);
-  const [scheduledMessages, setScheduledMessages] = useState([]);
-  const [selectedMsg, setSelectedMsg] = useState(null);
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
-  const [filter, setFilter] = useState('all');
-  const [activeTab, setActiveTab] = useState('inbox');
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [overallSummary, setOverallSummary] = useState('');
-  const [scheduleForm, setScheduleForm] = useState({
-    recipient: '',
-    message: '',
-    date: '',
-    time: '',
-    repeat: 'none'
-  });
+  const [compose, setCompose]   = useState(emptyCompose);
+  const [loading, setLoading]   = useState(true);
+  const [sending, setSending]   = useState(false);
+  const [error, setError]       = useState('');
+  const [notice, setNotice]     = useState('');
 
-  // Raw messages — AI fields will be filled by Gemini
-  const rawMessages = [
-    {
-      id: 1,
-      sender: "Ahmed",
-      phone: "+91 8885536667",
-      content: "Hi! Can we reschedule tomorrow's meeting to 3 PM? Something urgent came up.",
-      timestamp: new Date(Date.now() - 300000),
-    },
-    {
-      id: 2,
-      sender: "Friends Group",
-      phone: "+91 8462135789",
-      content: "Do not forget to take your Laptop Bag! Everyone arrive early for good impression.",
-      timestamp: new Date(Date.now() - 600000),
-    },
-    {
-      id: 3,
-      sender: "LinkedIn Updates",
-      phone: "+1234567892",
-      content: "You have 5 new job recommendations based on your profile. Check them out now!",
-      timestamp: new Date(Date.now() - 900000),
-    },
-    {
-      id: 4,
-      sender: "Alex Chen - Client",
-      phone: "+040 9834567893",
-      content: "The payment for invoice #1067 has been processed. You should see it in 2-3 business days. Thanks for your excellent work!",
-      timestamp: new Date(Date.now() - 1200000),
-    }
-  ];
-
-  // Hardcoded fallback data (used when Gemini API key is not set)
-  const fallbackAI = {
-    1: {
-      priority: "high", category: "work", sentiment: "neutral",
-      suggestedReplies: [
-        "Yes, 3 PM works perfectly. See you then!",
-        "Let me check my calendar and get back to you.",
-        "Unfortunately I have a conflict at 3 PM. How about 4 PM?"
-      ],
-      autoReply: "Thanks for letting me know! 3 PM works for me. See you then!",
-      aiSummary: "Meeting reschedule request for tomorrow at 3 PM"
-    },
-    2: {
-      priority: "high", category: "family", sentiment: "positive",
-      suggestedReplies: [
-        "Thanks for reminding me!",
-        "Will do! Love you bro ❤️",
-        "Packing it right now!"
-      ],
-      autoReply: "Thanks Friend! I'll take my laptop bag. Love you too! ❤️",
-      aiSummary: "Reminder to take laptop bag for meeting"
-    },
-    3: {
-      priority: "low", category: "marketing", sentiment: "neutral",
-      suggestedReplies: [],
-      autoReply: null,
-      aiSummary: "LinkedIn notification about job recommendations"
-    },
-    4: {
-      priority: "medium", category: "work", sentiment: "positive",
-      suggestedReplies: [
-        "Thank you! Pleasure working with you.",
-        "Great! Looking forward to our next project.",
-        "Received, thanks for the update!"
-      ],
-      autoReply: "Thank you! Payment confirmation received. Pleasure working with you!",
-      aiSummary: "Payment confirmation for invoice #1067"
-    }
-  };
-
-  const sampleScheduled = [
-    {
-      id: 1,
-      recipient: "Team Group",
-      phone: "+91 9988557456",
-      message: "Good morning team! Don't forget our Hackathon at 11 AM today.",
-      scheduledDate: new Date(Date.now() + 86400000),
-      repeat: "daily",
-      status: "pending"
-    },
-    {
-      id: 2,
-      recipient: "Mom",
-      phone: "+91 9638527410",
-      message: "Happy Birthday Mom! Hope you have an amazing day! 🎉🎂",
-      scheduledDate: new Date(Date.now() + 172800000),
-      repeat: "yearly",
-      status: "pending"
-    }
-  ];
-
-  // ---------- Gemini-powered AI analysis ----------
-  const processMessagesWithAI = useCallback(async () => {
-    setAiLoading(true);
-
-    if (!isGeminiAvailable()) {
-      // No API key → use hardcoded fallback
-      console.log("⚠️ No Gemini API key found. Using fallback data. Add VITE_GEMINI_API_KEY to .env");
-      const enriched = rawMessages.map(msg => ({
-        ...msg,
-        ...fallbackAI[msg.id]
-      }));
-      setMessages(enriched);
-
-      const fallbackSummary = `✨ Astra AI detected ${enriched.length} unread messages: ${enriched.filter(m => m.priority === 'high').length} high priority, ${enriched.filter(m => m.priority === 'medium').length} medium, and ${enriched.filter(m => m.priority === 'low').length} low. Key items: meeting reschedule from Ahmed, laptop bag reminder, and payment confirmation from client.`;
-      setOverallSummary(fallbackSummary);
-      setAiLoading(false);
-      return;
-    }
-
-    // ✅ Real Gemini AI — analyze every message
-    console.log("🚀 Gemini AI is active — analyzing messages...");
-
+  async function loadDashboard() {
+    setError('');
     try {
-      const enrichedPromises = rawMessages.map(async (msg) => {
-        const aiResult = await analyzeMessage(msg.content, msg.sender);
-        if (aiResult) {
-          return {
-            ...msg,
-            priority: aiResult.priority || "medium",
-            category: aiResult.category || "other",
-            sentiment: aiResult.sentiment || "neutral",
-            suggestedReplies: aiResult.suggestedReplies || [],
-            autoReply: aiResult.autoReply || null,
-            aiSummary: aiResult.aiSummary || "No summary available",
-          };
-        }
-        // If single message AI fails, use fallback for that message
-        return { ...msg, ...fallbackAI[msg.id] };
-      });
-
-      const enriched = await Promise.all(enrichedPromises);
-      setMessages(enriched);
-
-      // Generate inbox overview with Gemini
-      const summary = await generateInboxSummary(enriched);
-      setOverallSummary(summary || `✨ Astra AI analyzed ${enriched.length} messages with Google Gemini.`);
+      const [sRes, mRes] = await Promise.all([
+        fetch('/api/status'),
+        fetch('/api/messages'),
+      ]);
+      if (!sRes.ok || !mRes.ok) throw new Error('Failed to load dashboard data.');
+      setStatus(await sRes.json());
+      setMessages((await mRes.json()).messages || []);
     } catch (err) {
-      console.error("Gemini processing error:", err);
-      // Fallback on total failure
-      const enriched = rawMessages.map(msg => ({ ...msg, ...fallbackAI[msg.id] }));
-      setMessages(enriched);
-      setOverallSummary("✨ AI analysis temporarily unavailable. Showing cached insights.");
-    }
-
-    setAiLoading(false);
-  }, []);
+      setError(err.message || 'Unable to reach the local WhatsApp server.');
+    } finally { setLoading(false); }
+  }
 
   useEffect(() => {
-    initGemini();
-    processMessagesWithAI();
-    setScheduledMessages(sampleScheduled);
-  }, [processMessagesWithAI]);
+    loadDashboard();
+    const t = setInterval(loadDashboard, 7000);
+    return () => clearInterval(t);
+  }, []);
 
-  // ---------- Filtering & helpers ----------
-  const filteredMessages = messages.filter(msg => {
-    if (filter === 'all') return true;
-    return msg.priority === filter;
-  });
-
-  const getPriorityColor = (priority) => {
-    switch(priority) {
-      case 'high': return 'bg-red-100 text-red-800 border-red-300';
-      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'low': return 'bg-gray-100 text-gray-800 border-gray-300';
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
-
-  const getCategoryIcon = (category) => {
-    switch(category) {
-      case 'work': return '💼';
-      case 'family': return '👨‍👩‍👧‍👦';
-      case 'marketing': return '📢';
-      default: return '💬';
-    }
-  };
-
-  const handleQuickReply = (reply, sender) => {
-    const option = confirm(`Schedule this reply to ${sender}?\n\n"${reply}"\n\nClick OK to schedule, Cancel to send now.`);
-    if (option) {
-      setScheduleForm({ ...scheduleForm, recipient: sender, message: reply });
-      setShowScheduleModal(true);
-    } else {
-      alert(`Sending now: "${reply}"`);
-    }
-  };
-
-  const handleAutoReply = (msg) => {
-    if (msg.autoReply) {
-      alert(`Auto-reply sent: "${msg.autoReply}"`);
-    }
-  };
-
-  const handleScheduleMessage = (e) => {
+  async function handleSend(e) {
     e.preventDefault();
-    const newScheduled = {
-      id: scheduledMessages.length + 1,
-      recipient: scheduleForm.recipient,
-      message: scheduleForm.message,
-      scheduledDate: new Date(`${scheduleForm.date}T${scheduleForm.time}`),
-      repeat: scheduleForm.repeat,
-      status: 'pending'
-    };
-    setScheduledMessages([...scheduledMessages, newScheduled]);
-    setShowScheduleModal(false);
-    setScheduleForm({ recipient: '', message: '', date: '', time: '', repeat: 'none' });
-    alert('Message scheduled successfully!');
-  };
+    setSending(true); setError(''); setNotice('');
+    try {
+      const res = await fetch('/api/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(compose),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to send message.');
+      setCompose(emptyCompose);
+      setNotice('Message sent through Meta Cloud API.');
+      await loadDashboard();
+    } catch (err) { setError(err.message || 'Failed to send message.'); }
+    finally { setSending(false); }
+  }
 
-  const deleteScheduled = (id) => {
-    setScheduledMessages(scheduledMessages.filter(msg => msg.id !== id));
-  };
-
-  const stats = {
-    total: messages.length,
-    high: messages.filter(m => m.priority === 'high').length,
-    medium: messages.filter(m => m.priority === 'medium').length,
-    low: messages.filter(m => m.priority === 'low').length,
-    scheduled: scheduledMessages.length
-  };
-
-  // ---------- Render ----------
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-stone-950 text-stone-100 animate-view-fade">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 
         {/* Header */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <Sparkles className="w-8 h-8 text-violet-600" />
-              <h1 className="text-3xl font-bold text-gray-800">Astra AI</h1>
-              {isGeminiAvailable() && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full">
-                  Powered by Gemini
-                </span>
+        <header className="mb-8 overflow-hidden rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(34,197,94,0.3),_transparent_35%),linear-gradient(135deg,_rgba(12,10,9,0.96),_rgba(24,24,27,0.92))] p-8 shadow-2xl">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-green-400/30 bg-green-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-green-200">
+                <ShieldCheck className="h-4 w-4" />Official Meta Setup
+              </div>
+              <h1 className="font-serif text-4xl leading-tight text-white sm:text-5xl">
+                Astra AI Dashboard
+              </h1>
+              <p className="mt-4 max-w-2xl text-sm leading-7 text-stone-300 sm:text-base">
+                Live WhatsApp inbox with AI-powered message analysis. Incoming webhook events are analyzed by Gemini in real-time.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button type="button" onClick={onBack}
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">
+                <ArrowLeft className="h-4 w-4" />Home
+              </button>
+              <button type="button" onClick={loadDashboard}
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">
+                <RefreshCw className="h-4 w-4" />Refresh
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Alerts */}
+        {error && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border border-red-400/30 bg-red-500/10 p-4 text-red-100">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" /><p>{error}</p>
+          </div>
+        )}
+        {notice && (
+          <div className="mb-6 flex items-start gap-3 rounded-2xl border border-green-400/30 bg-green-500/10 p-4 text-green-100">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0" /><p>{notice}</p>
+          </div>
+        )}
+
+        {/* Stats cards */}
+        <section className="mb-6 grid gap-4 lg:grid-cols-4">
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="mb-3 flex items-center gap-2 text-stone-300"><Webhook className="h-5 w-5 text-green-300" />Webhook</div>
+            <div className="text-2xl font-bold text-white">{status?.webhookPath || '/api/whatsapp/webhook'}</div>
+            <p className="mt-2 text-sm text-stone-400">Use this path behind your public HTTPS tunnel.</p>
+          </article>
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="mb-3 flex items-center gap-2 text-stone-300"><ShieldCheck className="h-5 w-5 text-green-300" />Config</div>
+            <div className="text-2xl font-bold text-white">{status?.configured ? 'Ready' : 'Missing env'}</div>
+            <p className="mt-2 text-sm text-stone-400">Verify token, access token, and phone number ID.</p>
+          </article>
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="mb-3 flex items-center gap-2 text-stone-300"><MessageCircle className="h-5 w-5 text-green-300" />Messages</div>
+            <div className="text-2xl font-bold text-white">{messages.length}</div>
+            <p className="mt-2 text-sm text-stone-400">Stored locally from webhook events and sends.</p>
+          </article>
+          <article className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="mb-3 flex items-center gap-2 text-stone-300"><Brain className="h-5 w-5 text-green-300" />Gemini AI</div>
+            <div className="text-2xl font-bold text-white">{status?.geminiConfigured ? 'Active' : 'Off'}</div>
+            <p className="mt-2 text-sm text-stone-400">Automatic message analysis with Gemini 2.0 Flash.</p>
+          </article>
+        </section>
+
+        {/* Main content */}
+        <section className="mb-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          {/* Message Feed */}
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-semibold text-white">Live Message Feed</h2>
+                <p className="mt-1 text-sm text-stone-400">Incoming webhook traffic and outbound sends appear here.</p>
+              </div>
+              {loading && <Loader2 className="h-5 w-5 animate-spin text-green-300" />}
+            </div>
+
+            <div className="space-y-4">
+              {messages.map((msg) => {
+                const a = msg.analysis;
+                const pc = a ? (priorityColors[a.priority] || priorityColors.medium) : null;
+                return (
+                  <article key={msg.id} className="rounded-2xl border border-white/10 bg-stone-900/80 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-green-400/15 px-2 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-green-200">{msg.direction}</span>
+                          <span className="rounded-full bg-white/5 px-2 py-1 text-xs text-stone-300">{msg.type}</span>
+                          {a && (
+                            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-semibold capitalize ${pc.badge}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${pc.dot}`} />{a.priority}
+                            </span>
+                          )}
+                          {a?.sentiment && (
+                            <span className="text-xs">{sentimentEmoji[a.sentiment] || '📝'} {a.sentiment}</span>
+                          )}
+                        </div>
+                        <h3 className="mt-3 text-lg font-semibold text-white">{msg.sender}</h3>
+                        <p className="text-sm text-stone-400">{msg.waId || msg.chatName}</p>
+                      </div>
+                      <div className="text-sm text-stone-400">{formatTimestamp(msg.timestamp)}</div>
+                    </div>
+
+                    <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-stone-200">{msg.content}</p>
+
+                    {/* AI Analysis */}
+                    {a && (
+                      <div className="mt-4 space-y-3 border-t border-white/5 pt-4">
+                        {a.aiSummary && (
+                          <div className="flex items-start gap-2">
+                            <Brain className="h-4 w-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                            <p className="text-xs text-stone-300">{a.aiSummary}</p>
+                          </div>
+                        )}
+                        {a.suggestedReplies?.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {a.suggestedReplies.map((r, i) => (
+                              <span key={i} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] text-xs text-stone-300 hover:bg-white/[0.06] hover:border-emerald-500/20 transition cursor-pointer">
+                                {r}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+
+              {!loading && messages.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-white/15 bg-stone-900/60 p-8 text-center text-stone-400">
+                  No webhook messages yet. Once Meta sends an event to your endpoint, it will appear here.
+                </div>
               )}
             </div>
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoReplyEnabled}
-                  onChange={(e) => setAutoReplyEnabled(e.target.checked)}
-                  className="w-5 h-5"
-                />
-                <span className="text-sm font-medium">Auto-Reply</span>
-              </label>
-              <Zap className={autoReplyEnabled ? "text-yellow-500" : "text-gray-400"} />
-            </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-5 gap-4">
-            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-              <div className="text-2xl font-bold text-blue-600">{stats.total}</div>
-              <div className="text-sm text-blue-800">Total Messages</div>
-            </div>
-            <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-              <div className="text-2xl font-bold text-red-600">{stats.high}</div>
-              <div className="text-sm text-red-800">High Priority</div>
-            </div>
-            <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-              <div className="text-2xl font-bold text-yellow-600">{stats.medium}</div>
-              <div className="text-sm text-yellow-800">Medium Priority</div>
-            </div>
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <div className="text-2xl font-bold text-gray-600">{stats.low}</div>
-              <div className="text-sm text-gray-800">Low Priority</div>
-            </div>
-            <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
-              <div className="text-2xl font-bold text-purple-600">{stats.scheduled}</div>
-              <div className="text-sm text-purple-800">Scheduled</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              <button
-                onClick={() => setActiveTab('inbox')}
-                className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
-                  activeTab === 'inbox'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                <MessageCircle className="w-5 h-5" />
-                Inbox
-              </button>
-              <button
-                onClick={() => setActiveTab('scheduled')}
-                className={`px-6 py-3 rounded-lg font-medium transition flex items-center gap-2 ${
-                  activeTab === 'scheduled'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                <Calendar className="w-5 h-5" />
-                Scheduled ({stats.scheduled})
-              </button>
-            </div>
-            <button
-              onClick={() => setShowScheduleModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2 font-medium"
-            >
-              <Plus className="w-5 h-5" />
-              Schedule Message
-            </button>
-          </div>
-        </div>
-
-        {/* Inbox Tab */}
-        {activeTab === 'inbox' && (
-          <>
-            {/* AI Loading Indicator */}
-            {aiLoading && (
-              <div className="bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg shadow-lg p-6 mb-6 text-white">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  <div>
-                    <h2 className="text-lg font-bold">Gemini AI is analyzing your messages…</h2>
-                    <p className="text-white/80 text-sm">Summarizing, classifying priority, generating smart replies</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Overall AI Summary */}
-            {!aiLoading && overallSummary && (
-              <div className="bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg shadow-lg p-6 mb-6 text-white">
-                <div className="flex items-start gap-3">
-                  <Sparkles className="w-6 h-6 mt-1 flex-shrink-0" />
-                  <div>
-                    <h2 className="text-xl font-bold mb-2">
-                      AI Summary
-                      {isGeminiAvailable() && <span className="ml-2 text-sm font-normal opacity-80">— by Google Gemini</span>}
-                    </h2>
-                    <p className="text-white/90">{overallSummary}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Filter */}
-            <div className="bg-white rounded-lg shadow p-4 mb-6">
-              <div className="flex items-center gap-3">
-                <Filter className="w-5 h-5 text-gray-600" />
-                <div className="flex gap-2">
-                  {['all', 'high', 'medium', 'low'].map(f => (
-                    <button
-                      key={f}
-                      onClick={() => setFilter(f)}
-                      className={`px-4 py-2 rounded-lg font-medium transition ${
-                        filter === f
-                          ? 'bg-green-600 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                      }`}
-                    >
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Messages Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {filteredMessages.map(msg => (
-                <div key={msg.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
-                  {/* Message Header */}
-                  <div className="bg-gradient-to-r from-green-600 to-green-500 p-4 text-white">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{getCategoryIcon(msg.category)}</span>
-                        <h3 className="font-bold text-lg">{msg.sender}</h3>
-                      </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${getPriorityColor(msg.priority)} bg-white`}>
-                        {msg.priority.toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-green-100 text-sm">
-                      <Clock className="w-4 h-4" />
-                      {msg.timestamp.toLocaleTimeString()}
-                      {msg.sentiment && (
-                        <span className="ml-2 px-2 py-0.5 bg-white/20 rounded text-xs">
-                          {msg.sentiment === 'positive' ? '😊' : msg.sentiment === 'negative' ? '😟' : '😐'} {msg.sentiment}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Message Content */}
-                  <div className="p-4">
-                    <p className="text-gray-700 mb-4">{msg.content}</p>
-
-                    {/* AI Summary */}
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
-                      <div className="flex items-start gap-2">
-                        <TrendingUp className="w-4 h-4 text-purple-600 mt-0.5" />
-                        <div>
-                          <div className="text-xs font-bold text-purple-800 mb-1">
-                            AI INSIGHT {isGeminiAvailable() && <span className="font-normal text-purple-500">· Gemini</span>}
-                          </div>
-                          <div className="text-sm text-purple-900">{msg.aiSummary}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Suggested Replies */}
-                    {msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
-                      <div className="space-y-2">
-                        <div className="text-sm font-bold text-gray-700 flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-yellow-500" />
-                          Quick Replies {isGeminiAvailable() && <span className="font-normal text-gray-400 text-xs">AI-generated</span>}
-                        </div>
-                        {msg.suggestedReplies.map((reply, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => handleQuickReply(reply, msg.sender)}
-                            className="w-full text-left p-3 bg-gray-50 hover:bg-green-50 border border-gray-200 hover:border-green-300 rounded-lg text-sm transition group"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-700 group-hover:text-green-700">{reply}</span>
-                              <Send className="w-4 h-4 text-gray-400 group-hover:text-green-600" />
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Auto Reply */}
-                    {msg.autoReply && autoReplyEnabled && (
-                      <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="text-xs font-bold text-green-800 mb-1">AUTO-REPLY</div>
-                            <div className="text-sm text-green-900">{msg.autoReply}</div>
-                          </div>
-                          <button
-                            onClick={() => handleAutoReply(msg)}
-                            className="ml-3 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
-                          >
-                            <CheckCircle className="w-4 h-4" />
-                            Send
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {/* Scheduled Tab */}
-        {activeTab === 'scheduled' && (
-          <div className="space-y-4">
-            {scheduledMessages.map(msg => (
-              <div key={msg.id} className="bg-white rounded-lg shadow-lg p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Calendar className="w-5 h-5 text-purple-600" />
-                      <h3 className="font-bold text-lg text-gray-800">{msg.recipient}</h3>
-                      <span className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold">
-                        {msg.repeat.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-gray-700 mb-3 pl-8">{msg.message}</p>
-                    <div className="flex items-center gap-4 text-sm text-gray-600 pl-8">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        {msg.scheduledDate.toLocaleString()}
-                      </div>
-                      <div className="px-2 py-1 bg-green-100 text-green-700 rounded">
-                        {msg.status}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button className="p-2 hover:bg-gray-100 rounded-lg transition">
-                      <Edit className="w-5 h-5 text-gray-600" />
-                    </button>
-                    <button
-                      onClick={() => deleteScheduled(msg.id)}
-                      className="p-2 hover:bg-red-100 rounded-lg transition"
-                    >
-                      <X className="w-5 h-5 text-red-600" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {scheduledMessages.length === 0 && (
-              <div className="bg-white rounded-lg shadow-lg p-12 text-center">
-                <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-gray-600 mb-2">No Scheduled Messages</h3>
-                <p className="text-gray-500">Click "Schedule Message" to create your first scheduled message</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Schedule Modal */}
-        {showScheduleModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">Schedule Message</h2>
-                <button
-                  onClick={() => setShowScheduleModal(false)}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition"
-                >
-                  <X className="w-6 h-6 text-gray-600" />
-                </button>
-              </div>
-              <form onSubmit={handleScheduleMessage} className="space-y-4">
+          {/* Right sidebar */}
+          <div className="space-y-6">
+            {/* Send form */}
+            <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+              <h2 className="text-2xl font-semibold text-white">Send Test Reply</h2>
+              <p className="mt-2 text-sm leading-7 text-stone-400">
+                Send a text message through the official Cloud API. Use an E.164 WhatsApp number like
+                <span className="mx-1 rounded bg-white/5 px-2 py-1 text-stone-200">919876543210</span>
+                without a plus sign.
+              </p>
+              <form className="mt-6 space-y-4" onSubmit={handleSend}>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Recipient
-                  </label>
-                  <input
-                    type="text"
-                    value={scheduleForm.recipient}
-                    onChange={(e) => setScheduleForm({...scheduleForm, recipient: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    placeholder="Enter name or number"
-                    required
-                  />
+                  <label className="mb-2 block text-sm font-medium text-stone-300" htmlFor="to">Recipient number</label>
+                  <input id="to" type="text" value={compose.to}
+                    onChange={(e) => setCompose((c) => ({ ...c, to: e.target.value }))}
+                    className="w-full rounded-2xl border border-white/10 bg-stone-950/80 px-4 py-3 text-white outline-none transition focus:border-green-400/50"
+                    placeholder="919876543210" required />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Message
-                  </label>
-                  <textarea
-                    value={scheduleForm.message}
-                    onChange={(e) => setScheduleForm({...scheduleForm, message: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    rows="4"
-                    placeholder="Type your message..."
-                    required
-                  />
+                  <label className="mb-2 block text-sm font-medium text-stone-300" htmlFor="message">Message body</label>
+                  <textarea id="message" rows="5" value={compose.message}
+                    onChange={(e) => setCompose((c) => ({ ...c, message: e.target.value }))}
+                    className="w-full rounded-2xl border border-white/10 bg-stone-950/80 px-4 py-3 text-white outline-none transition focus:border-green-400/50"
+                    placeholder="Hello from the official Meta WhatsApp integration." required />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Date
-                    </label>
-                    <input
-                      type="date"
-                      value={scheduleForm.date}
-                      onChange={(e) => setScheduleForm({...scheduleForm, date: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Time
-                    </label>
-                    <input
-                      type="time"
-                      value={scheduleForm.time}
-                      onChange={(e) => setScheduleForm({...scheduleForm, time: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Repeat
-                  </label>
-                  <select
-                    value={scheduleForm.repeat}
-                    onChange={(e) => setScheduleForm({...scheduleForm, repeat: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  >
-                    <option value="none">None</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-                <button
-                  type="submit"
-                  className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium flex items-center justify-center gap-2"
-                >
-                  <Calendar className="w-5 h-5" />
-                  Schedule Message
+                <button type="submit" disabled={sending}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-green-500 px-5 py-3 font-semibold text-stone-950 transition hover:bg-green-400 disabled:cursor-not-allowed disabled:bg-green-500/60">
+                  {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+                  {sending ? 'Sending...' : 'Send with Meta'}
                 </button>
               </form>
-            </div>
+            </section>
+
+            {/* Setup checklist */}
+            <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+              <h2 className="text-2xl font-semibold text-white">Meta Setup Checklist</h2>
+              <ol className="mt-4 space-y-3 text-sm leading-7 text-stone-300">
+                <li>1. Copy <code className="rounded bg-white/5 px-2 py-1">.env.example</code> to <code className="rounded bg-white/5 px-2 py-1">.env</code>.</li>
+                <li>2. Add your Meta verify token, access token, phone number ID, and WABA ID.</li>
+                <li>3. Run the Node server and expose it with an HTTPS tunnel like ngrok.</li>
+                <li>4. In Meta App Dashboard, set the callback URL to your public tunnel plus <code className="rounded bg-white/5 px-2 py-1">/api/whatsapp/webhook</code>.</li>
+                <li>5. Subscribe to message webhook events, then send a test message to your business number.</li>
+              </ol>
+            </section>
           </div>
-        )}
+        </section>
       </div>
     </div>
   );
-};
+}
 
-export default WhatsAppAIDashboard;
+/* ───── Landing Page ───── */
+
+function LandingPage({ onNavigate }) {
+  return (
+    <div className="animate-view-fade">
+      <Hero onNavigate={onNavigate} />
+      <HowItWorks />
+      <Features />
+      <InteractiveDemo />
+      <Footer />
+    </div>
+  );
+}
+
+/* ───── Root App ───── */
+
+export default function App() {
+  const [view, setView] = useState('landing');
+
+  // scroll to top on view change
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [view]);
+
+  if (view === 'dashboard') {
+    return <Dashboard onBack={() => setView('landing')} />;
+  }
+
+  return <LandingPage onNavigate={setView} />;
+}
