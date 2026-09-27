@@ -29,17 +29,40 @@ const FALLBACK = {
   aiSummary: 'Message received.',
 };
 
-export async function analyzeMessage(content, sender = 'Unknown') {
+/**
+ * analyzeMessage — analyze a WhatsApp message with Gemini AI.
+ *
+ * @param {string}   content   Raw message text
+ * @param {string}   sender    Display name of the sender
+ * @param {string[]} memories  Past memories from Hindsight recall() for this contact
+ */
+export async function analyzeMessage(content, sender = 'Unknown', memories = []) {
   if (!ensureModel()) return { ...FALLBACK, aiSummary: content.slice(0, 100) };
+
+  // Build context block from recalled memories (injected before the current message)
+  const memoryBlock =
+    memories.length > 0
+      ? [
+          '--- CONTACT MEMORY (from previous conversations) ---',
+          ...memories.map((m, i) => `[${i + 1}] ${m}`),
+          '--- END MEMORY ---',
+          'Use the above history to personalize your analysis and suggestedReplies.',
+          '',
+        ].join('\n')
+      : '';
 
   const prompt = [
     'You are a WhatsApp inbox assistant.',
     'Analyze this message and return ONLY valid JSON with keys:',
     'priority (high|medium|low), category (work|family|marketing|other), sentiment (positive|neutral|negative|urgent),',
-    'suggestedReplies (array of up to 3 short strings), autoReply (string or null), aiSummary (short string).',
+    'suggestedReplies (array of up to 3 short strings that feel personal and reference past context when available),',
+    'autoReply (string or null), aiSummary (short string).',
+    memoryBlock,
     `Sender: ${sender}`,
     `Message: ${content}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   try {
     const result = await model.generateContent(prompt);

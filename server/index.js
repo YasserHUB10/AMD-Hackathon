@@ -9,6 +9,7 @@ import {
   sendTextMessage,
 } from './whatsapp.js';
 import { analyzeMessage, isGeminiConfigured } from './gemini.js';
+import { retainMessage, recallMemories, isMemoryConfigured } from './memory.js';
 
 const port = Number(process.env.PORT || 3001);
 
@@ -78,6 +79,7 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, 200, {
       configured: isWhatsAppConfigured(),
       geminiConfigured: isGeminiConfigured(),
+      memoryConfigured: isMemoryConfigured(),
       graphVersion: config.graphVersion,
       phoneNumberIdPresent: Boolean(config.phoneNumberId),
       businessAccountIdPresent: Boolean(config.businessAccountId),
@@ -147,9 +149,20 @@ const server = http.createServer(async (request, response) => {
       // Analyze each message with Gemini AI (non-blocking)
       for (const msg of incomingMessages) {
         try {
-          const analysis = await analyzeMessage(msg.content, msg.sender);
+          // 1️⃣  RECALL — fetch this contact's past memories before generating the AI reply
+          const memories = await recallMemories(msg.waId, msg.content);
+
+          // 2️⃣  ANALYZE — pass recalled memories to enrich the Gemini prompt
+          const analysis = await analyzeMessage(msg.content, msg.sender, memories);
           msg.analysis = analysis;
+
+          // Attach memory metadata so the frontend can show it
+          msg.memoryCount = memories.length;
+
           console.log(`🤖 AI: [${analysis.priority}] ${analysis.aiSummary}`);
+
+          // 3️⃣  RETAIN — persist this message + analysis to Hindsight
+          await retainMessage(msg, analysis);
         } catch (err) {
           console.error('AI analysis failed for message:', err.message);
         }
@@ -157,6 +170,98 @@ const server = http.createServer(async (request, response) => {
 
       addMessages(incomingMessages);
       sendJson(response, 200, { ok: true, received: incomingMessages.length });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
+  // ─── DEMO ENDPOINT ────────────────────────────────────────────────────────
+  // POST /api/demo/conversation
+  // Simulates a 10-message multi-turn conversation with one fake contact
+  // so you can see memory grow: msg 1 (no memory) → msg 5 → msg 10 (rich context).
+  //
+  // Body: { waId?: string, senderName?: string }
+  // Returns: array of { turn, message, memories, analysis }
+  if (request.method === 'POST' && url.pathname === '/api/demo/conversation') {
+    try {
+      const body = await readJsonBody(request);
+      const waId = body.waId || 'demo-9999999999';
+      const senderName = body.senderName || 'Demo User';
+
+      const script = [
+        "Hi! I'm looking for a laptop.",
+        "My budget is around $1000.",
+        "I mainly do video editing and gaming.",
+        "I prefer a 15-inch screen.",
+        "Do you have anything with an RTX 4060?",
+        "What about battery life? I travel a lot.",
+        "I also need good thermal performance — my last laptop throttled badly.",
+        "Can you compare the ASUS ROG and the Lenovo Legion?",
+        "I think I'm leaning toward the Legion. Any deals?",
+        "Great, I'll go with the Legion 5 Pro. What's the return policy?",
+      ];
+
+      const results = [];
+
+      for (let i = 0; i < script.length; i++) {
+        const content = script[i];
+        const turn = i + 1;
+
+        // Recall memories from Hindsight before analysis
+        const memories = await recallMemories(waId, content);
+
+        // Analyze with Gemini (memories injected into prompt)
+        const analysis = await analyzeMessage(content, senderName, memories).catch(() => null);
+
+        const msg = {
+          id: `demo-${waId}-${turn}`,
+          waId,
+          sender: senderName,
+          chatName: senderName,
+          content,
+          type: 'text',
+          direction: 'inbound',
+          timestamp: new Date().toISOString(),
+          source: 'demo',
+          analysis,
+          memoryCount: memories.length,
+        };
+
+        // Persist to Hindsight after analysis
+        await retainMessage(msg, analysis);
+
+        // Also add to the in-memory store so it shows in the dashboard
+        addMessages([msg]);
+
+        results.push({
+          turn,
+          message: content,
+          memoriesAtTurnStart: memories,
+          analysis,
+        });
+
+        console.log(`🎬 Demo turn ${turn}: ${memories.length} memories recalled`);
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        waId,
+        senderName,
+        turns: results,
+      });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
+  // GET /api/demo/memories/:waId — inspect what Hindsight remembers for a contact
+  if (request.method === 'GET' && url.pathname.startsWith('/api/demo/memories/')) {
+    const waId = url.pathname.replace('/api/demo/memories/', '');
+    try {
+      const memories = await recallMemories(waId, 'What do I know about this contact?');
+      sendJson(response, 200, { ok: true, waId, memories });
     } catch (error) {
       sendJson(response, 500, { ok: false, error: error.message });
     }
@@ -172,5 +277,10 @@ server.listen(port, () => {
     console.log('🤖 Gemini AI is configured — incoming messages will be analyzed.');
   } else {
     console.log('⚠️  GEMINI_API_KEY not set — AI analysis disabled.');
+  }
+  if (isMemoryConfigured()) {
+    console.log('🧠 Hindsight memory is configured — messages will be retained and recalled per contact.');
+  } else {
+    console.log('ℹ️  HINDSIGHT_BASE_URL not set — persistent memory disabled (set it to enable).');
   }
 });
