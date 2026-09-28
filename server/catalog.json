@@ -1,0 +1,59 @@
+{
+  "return_policy": "30-day return policy. Items must be unopened or defective. Original receipt required. Opened non-defective items are not eligible for return.",
+  "laptops": [
+    {
+      "name": "Lenovo Legion 5 Pro Gen 9",
+      "price_usd": 1099,
+      "gpu": "NVIDIA GeForce RTX 4060",
+      "screen_size_inches": 16,
+      "battery_hours": 6,
+      "thermal_notes": "Excellent thermal performance. Dual-fan Coldfront 5.0 cooling system. Sustained full TDP under extended gaming and rendering loads with minimal throttling.",
+      "in_stock": true
+    },
+    {
+      "name": "ASUS ROG Strix G16 (2024)",
+      "price_usd": 1149,
+      "gpu": "NVIDIA GeForce RTX 4060",
+      "screen_size_inches": 16,
+      "battery_hours": 4,
+      "thermal_notes": "Good thermals under gaming loads. Tri-fan MUX Switch design. Can run warm during prolonged rendering sessions; recommend using Turbo mode for sustained workloads.",
+      "in_stock": true
+    },
+    {
+      "name": "Acer Nitro V 15",
+      "price_usd": 749,
+      "gpu": "NVIDIA GeForce RTX 4050",
+      "screen_size_inches": 15.6,
+      "battery_hours": 7,
+      "thermal_notes": "Decent thermals for the price. Dual-fan cooling adequate for casual gaming; may throttle under sustained 4K video exports.",
+      "in_stock": true
+    },
+    {
+      "name": "HP Victus 15",
+      "price_usd": 849,
+      "gpu": "NVIDIA GeForce RTX 4060",
+      "screen_size_inches": 15.6,
+      "battery_hours": 8,
+      "thermal_notes": "Above-average battery for a gaming laptop. Thermal performance is adequate but not class-leading; throttles after ~30 min of sustained GPU load.",
+      "in_stock": false
+    },
+    {
+      "name": "MSI Katana 15",
+      "price_usd": 999,
+      "gpu": "NVIDIA GeForce RTX 4060",
+      "screen_size_inches": 15.6,
+      "battery_hours": 5,
+      "thermal_notes": "Solid cooling with 6 heat pipes. Good sustained performance for video editing. Runs slightly louder than competition under full load.",
+      "in_stock": true
+    },
+    {
+      "name": "Dell G15 (2024)",
+      "price_usd": 879,
+      "gpu": "NVIDIA GeForce RTX 4050",
+      "screen_size_inches": 15.6,
+      "battery_hours": 9,
+      "thermal_notes": "Best-in-class battery life for a gaming laptop in this range. Thermal performance conservative by design — excellent for travel use but GPU headroom is limited.",
+      "in_stock": true
+    }
+  ]
+}

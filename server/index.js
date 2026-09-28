@@ -189,6 +189,9 @@ const server = http.createServer(async (request, response) => {
       const waId = body.waId || 'demo-9999999999';
       const senderName = body.senderName || 'Demo User';
 
+      // ?memory=off disables recall() and retain() for this run
+      const memoryEnabled = url.searchParams.get('memory') !== 'off';
+
       const script = [
         "Hi! I'm looking for a laptop.",
         "My budget is around $1000.",
@@ -211,8 +214,8 @@ const server = http.createServer(async (request, response) => {
         // 1.5 s inter-turn delay (skip before the very first turn)
         if (i > 0) await new Promise((r) => setTimeout(r, 1500));
 
-        // Recall memories from Hindsight before analysis
-        const memories = await recallMemories(waId, content);
+        // Recall memories from Hindsight before analysis (skipped when memory=off)
+        const memories = memoryEnabled ? await recallMemories(waId, content) : [];
 
         // Analyze with Gemini (memories injected into prompt)
         const analysis = await analyzeMessage(content, senderName, memories).catch(() => null);
@@ -231,8 +234,8 @@ const server = http.createServer(async (request, response) => {
           memoryCount: memories.length,
         };
 
-        // Persist to Hindsight after analysis
-        await retainMessage(msg, analysis);
+        // Persist to Hindsight after analysis (skipped when memory=off)
+        if (memoryEnabled) await retainMessage(msg, analysis);
 
         // Also add to the in-memory store so it shows in the dashboard
         addMessages([msg]);
@@ -240,6 +243,7 @@ const server = http.createServer(async (request, response) => {
         results.push({
           turn,
           message: content,
+          memoryEnabled,
           memoriesAtTurnStart: memories,
           modelUsed: analysis?.modelUsed ?? 'none',
           usedFallbackReply: analysis?.usedFallbackReply ?? true,
@@ -248,7 +252,7 @@ const server = http.createServer(async (request, response) => {
         });
 
         console.log(
-          `🎬 Demo turn ${turn}: ${memories.length} memories recalled` +
+          `🎬 Demo turn ${turn} [memory=${memoryEnabled ? 'on' : 'off'}]: ${memories.length} memories recalled` +
           ` | model=${analysis?.modelUsed ?? 'none'}` +
           ` | fallback=${analysis?.usedFallbackReply ?? true}`
         );
@@ -258,6 +262,7 @@ const server = http.createServer(async (request, response) => {
         ok: true,
         waId,
         senderName,
+        memoryEnabled,
         turns: results,
       });
     } catch (error) {

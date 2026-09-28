@@ -1,4 +1,29 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// ---------------------------------------------------------------------------
+// Product catalog — loaded once at startup, injected into every prompt
+// ---------------------------------------------------------------------------
+const __dir = dirname(fileURLToPath(import.meta.url));
+const catalog = JSON.parse(readFileSync(join(__dir, 'catalog.json'), 'utf8'));
+
+// Pre-format the catalog block so it doesn't get rebuilt on every call
+const CATALOG_BLOCK = [
+  '--- PRODUCT CATALOG ---',
+  `Return policy: ${catalog.return_policy}`,
+  '',
+  'Available laptops:',
+  ...catalog.laptops.map((l, i) =>
+    `[${i + 1}] ${l.name} | $${l.price_usd} | GPU: ${l.gpu} | Screen: ${l.screen_size_inches}" | Battery: ~${l.battery_hours}h | Thermal: ${l.thermal_notes} | In stock: ${l.in_stock}`
+  ),
+  '--- END CATALOG ---',
+  'Only state product facts (stock, specs, prices, return policy) that appear in the catalog.',
+  "If the catalog doesn't cover it, say you'll check.",
+  'Use CONTACT MEMORY to personalize.',
+  '',
+].join('\n');
 
 // ---------------------------------------------------------------------------
 // Model chain — primary model read from env, fallbacks tried in order
@@ -113,11 +138,12 @@ export async function analyzeMessage(content, sender = 'Unknown', memories = [])
       : '';
 
   const prompt = [
-    'You are a WhatsApp inbox assistant.',
+    'You are a WhatsApp inbox assistant for a laptop store.',
     'Analyze this message and return ONLY valid JSON with keys:',
     'priority (high|medium|low), category (work|family|marketing|other), sentiment (positive|neutral|negative|urgent),',
     'suggestedReplies (array of up to 3 short strings that feel personal and reference past context when available),',
     'autoReply (string or null), aiSummary (short string).',
+    CATALOG_BLOCK,
     memoryBlock,
     `Sender: ${sender}`,
     `Message: ${content}`,
