@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: astra-ai-server
+    env: node
+    plan: free
+    region: oregon  # closest free-tier region; change to frankfurt if you're in Europe
+    rootDir: .
+    buildCommand: npm install
+    startCommand: node server/index.js
+    envVars:
+      - key: PORT
+        value: 10000          # Render free tier always exposes port 10000
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard, NOT here — never commit secrets:
+      # GEMINI_API_KEY
+      # GEMINI_MODEL
+      # HINDSIGHT_BASE_URL
+      # HINDSIGHT_API_KEY
+      # WHATSAPP_VERIFY_TOKEN   (optional — only needed for live Meta webhook)
+      # WHATSAPP_ACCESS_TOKEN   (optional)
+      # WHATSAPP_PHONE_NUMBER_ID (optional)
