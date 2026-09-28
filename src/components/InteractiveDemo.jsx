@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Brain, Send, Loader2, Sparkles, RotateCcw } from 'lucide-react';
-import { analyzeMessage, isGeminiAvailable, initGemini } from '../gemini.js';
+import { analyzeMessage } from '../gemini.js';
 
 const sampleMessages = [
   { text: 'URGENT: The server is down, we need to fix this ASAP!', sender: 'DevOps Team' },
@@ -31,8 +31,6 @@ export default function InteractiveDemo() {
     setError('');
     setAnalysis(null);
     try {
-      initGemini();
-      if (!isGeminiAvailable()) throw new Error('Gemini API key not configured');
       const result = await analyzeMessage(text, senderName || 'Unknown');
       if (!result) throw new Error('No analysis returned');
       setAnalysis(result);

@@ -4,7 +4,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://astra-ai-server.onrender.com/api/:path*"
+      "destination": "https://astra-ai-server-uraa.onrender.com/api/:path*"
     }
   ]
 }

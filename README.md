@@ -1,133 +1,108 @@
-# WhatsApp Cloud API Dashboard
+# Astra AI
 
-This project now includes:
+Astra AI is a WhatsApp customer-response agent with a React/Vite dashboard and a Node/Express backend. It receives WhatsApp messages, analyzes them with Gemini, and uses Hindsight to remember useful context for each contact. The frontend is intended for Vercel, while the backend runs on Render.
 
-- A Vite React dashboard for viewing incoming webhook messages
-- A small Node server for Meta webhook verification and message ingestion
-- A send endpoint for outbound WhatsApp text messages through the official Cloud API
-
-## Environment
-
-Copy `.env.example` to `.env` and fill in:
-
-- `WHATSAPP_VERIFY_TOKEN`
-- `WHATSAPP_ACCESS_TOKEN`
-- `WHATSAPP_PHONE_NUMBER_ID`
-- `WHATSAPP_BUSINESS_ACCOUNT_ID`
-- `WHATSAPP_GRAPH_VERSION`
-- `PORT`
-- `VITE_GEMINI_API_KEY` if you also want Gemini features later
-
-## Run locally
-
-Use two terminals from the repo root:
-
-```powershell
-npm run server
-```
-
-```powershell
-npm run dev
-```
-
-The frontend runs on Vite and proxies `/api` calls to `http://localhost:3001`.
-
-## Webhook URL
-
-Expose your local server over HTTPS with a tunnel, then use:
+The deployed backend is:
 
 ```text
-https://your-public-url/api/whatsapp/webhook
+https://astra-ai-server-uraa.onrender.com
 ```
 
-Use the same verify token value in Meta and your local `.env`.
+## Architecture
 
-## Available endpoints
+```mermaid
+flowchart LR
+    WA[WhatsApp Cloud API] -->|webhook| API[Node/Express backend\nserver/index.js]
+    UI[React/Vite dashboard] -->|/api requests| API
+    API -->|analyze message| G[Gemini]
+    API -->|recall and retain\ncontact context| H[Hindsight]
+    API -->|messages and analysis| UI
+```
 
-- `GET /api/status`
-- `GET /api/messages`
-- `POST /api/send`
-- `GET /api/whatsapp/webhook`
-- `POST /api/whatsapp/webhook`
-- `POST /api/demo/conversation` *(new — see below)*
-- `GET /api/demo/memories/:waId` *(new — see below)*
-
-## Notes
-
-- The local message store is in-memory for now, so messages reset when the server restarts.
-- Outbound sending is currently text-only.
-- Group and community behavior depends on what Meta delivers to your WABA and webhook subscriptions.
-
----
+The backend keeps the in-memory dashboard store for the current process, while Hindsight supplies persistent memory across restarts and conversations. The frontend sends analysis requests to `POST /api/analyze`; provider configuration stays on the backend.
 
 ## How Hindsight Memory Is Used
 
-Astra AI uses [Hindsight](https://hindsight.vectorize.io/) to give the agent **persistent memory across conversations** — not just within one chat session, but across every interaction with a specific WhatsApp contact over time.
+Each WhatsApp contact gets a separate Hindsight memory bank named `whatsapp-<waId>`. This prevents one contact's preferences or purchase history from being recalled for another contact.
 
-### Why it matters
+### What gets retained
 
-Without memory, every inbound message is treated as the first one. The AI has no idea that a contact mentioned their budget, preferred product, or past objections. With Hindsight, the agent accumulates a growing "mental model" of each contact and surfaces that context automatically.
+After a message is analyzed, `retainMessage()` in [`server/memory.js`](server/memory.js) stores an observation containing the contact and message identifiers, message text, timestamp, and available analysis such as priority, sentiment, category, AI summary, and suggested replies.
 
-### What `retain()` does
+### What gets recalled
 
-Every time an inbound message arrives, `retainMessage()` in [`server/memory.js`](server/memory.js) is called **after** Gemini analysis. It builds a rich observation string containing:
+Before Gemini analyzes a new message, `recallMemories()` queries the contact's bank using the current message. The relevant returned memories are passed into the analysis prompt, so the response can use earlier details such as a budget, preferred screen size, product interests, or a previous concern.
 
-```
-[WhatsApp message from Alice (919876543210) at 2026-09-27T16:00:00Z]
-Message: My budget is around $1000.
-Priority: high
-Sentiment: positive
-Category: work
-AI Summary: Contact has stated a $1000 budget for a product purchase.
-```
+The `/api/demo/conversation` endpoint demonstrates this with ten scripted turns. It returns the memories available at the start of each turn, making the memory behavior visible. The scripted conversation is sample data, not a claim about a real customer.
 
-This observation is stored in a **contact-scoped memory bank** named `whatsapp-<waId>`, isolating every contact's memories from every other.
+## Setup
 
-### What `recall()` does
+1. Install the dependencies already declared by the repository:
 
-Every time an inbound message arrives, `recallMemories()` is called **before** Gemini analysis. It sends the current message text as a query to Hindsight's multi-strategy retrieval (semantic + keyword + graph traversal + temporal). Hindsight returns the most relevant past facts for that contact.
+   ```bash
+   npm install
+   ```
 
-These memories are injected into the Gemini prompt as a block:
+2. Copy the placeholder configuration file:
 
-```
---- CONTACT MEMORY (from previous conversations) ---
-[1] [WhatsApp message from Alice...] Budget: $1000, prefers 15-inch screen...
-[2] [WhatsApp message from Alice...] Interested in RTX 4060, travels often...
---- END MEMORY ---
-Use the above history to personalize your analysis and suggestedReplies.
-```
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-The result: suggested replies and AI summaries reference what Alice actually told us — not a generic template.
+3. Fill `.env` with your own local values. Use placeholders in documentation and keep real credentials only in the untracked `.env` file. Server-side values include `GEMINI_API_KEY`, the WhatsApp settings, and the Hindsight settings. For Hindsight, configure either a self-hosted URL or the Hindsight Cloud URL and its API key.
 
-### Configuration
+4. Start the backend in one terminal:
 
-Set these in your `.env`:
+   ```bash
+   npm run server
+   ```
 
-```env
-# Self-hosted Hindsight server
-HINDSIGHT_BASE_URL=http://localhost:8888
+5. Start the Vite frontend in another terminal:
 
-# OR Hindsight Cloud
-HINDSIGHT_BASE_URL=https://api.hindsight.vectorize.io
-HINDSIGHT_API_KEY=your_api_key_here
-```
+   ```bash
+   npm run dev
+   ```
 
-If `HINDSIGHT_BASE_URL` is not set, memory is silently disabled and all other features continue to work normally.
+The local backend listens on the configured `PORT` (the example uses `3001`). For a deployed frontend, `/api` requests should be rewritten to the Render backend URL.
 
-### Demo endpoint
+## Demo endpoint
 
-To see memory growth across 10 messages with a fake contact:
+Run the ten-turn sample laptop-shopping conversation:
 
 ```bash
 curl -X POST http://localhost:3001/api/demo/conversation \
   -H "Content-Type: application/json" \
-  -d '{"waId": "demo-alice-001", "senderName": "Alice"}'
+  -d '{"waId":"demo-alice-001","senderName":"Alice"}'
 ```
 
-The response shows `memoriesAtTurnStart` for each turn — turn 1 will have 0 memories, turn 5 will have several, and turn 10 will have a full picture of Alice's stated preferences, budget, and product decisions.
+The response contains `memoryEnabled`, each turn's `memoriesAtTurnStart`, the analysis, and the model/fallback metadata. To run the same sample without recalling or retaining Hindsight memories, add `?memory=off`:
 
-To inspect what Hindsight currently knows about a contact:
+```bash
+curl -X POST "http://localhost:3001/api/demo/conversation?memory=off" \
+  -H "Content-Type: application/json" \
+  -d '{"waId":"demo-alice-001","senderName":"Alice"}'
+```
+
+To inspect the memories for a contact:
 
 ```bash
 curl http://localhost:3001/api/demo/memories/demo-alice-001
 ```
+
+## Other API endpoints
+
+- `GET /api/status`
+- `GET /api/messages`
+- `POST /api/analyze`
+- `POST /api/send`
+- `GET /api/whatsapp/webhook`
+- `POST /api/whatsapp/webhook`
+- `POST /api/demo/conversation`
+- `GET /api/demo/memories/:waId`
+
+## Notes
+
+- The local message store is in memory and resets when the server restarts.
+- Hindsight memory is scoped by WhatsApp contact ID.
+- The laptop demo uses the catalog in [`server/catalog.json`](server/catalog.json); generated replies should be grounded in the available catalog data.
+- Outbound WhatsApp sending is text-only in the current implementation.

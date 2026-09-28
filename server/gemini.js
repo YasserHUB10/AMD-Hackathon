@@ -36,7 +36,7 @@ let genAI = null;
 
 function getGenAI() {
   if (genAI) return genAI;
-  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   genAI = new GoogleGenerativeAI(apiKey);
   return genAI;
@@ -180,5 +180,5 @@ export async function analyzeMessage(content, sender = 'Unknown', memories = [])
 }
 
 export function isGeminiConfigured() {
-  return Boolean(process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }

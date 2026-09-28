@@ -96,6 +96,25 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/analyze') {
+    try {
+      const body = await readJsonBody(request);
+      if (typeof body.content !== 'string' || !body.content.trim()) {
+        sendJson(response, 400, { ok: false, error: 'content is required' });
+        return;
+      }
+
+      const memories = Array.isArray(body.memories)
+        ? body.memories.filter((memory) => typeof memory === 'string')
+        : [];
+      const analysis = await analyzeMessage(body.content, body.sender || 'Unknown', memories);
+      sendJson(response, 200, { ok: true, analysis });
+    } catch (error) {
+      sendJson(response, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/send') {
     try {
       const body = await readJsonBody(request);
