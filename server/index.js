@@ -205,7 +205,8 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/api/demo/conversation') {
     try {
       const body = await readJsonBody(request);
-      const waId = body.waId || 'demo-9999999999';
+      const requestedWaId = body.waId || 'demo-9999999999';
+      const waId = `${requestedWaId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const senderName = body.senderName || 'Demo User';
 
       // ?memory=off disables recall() and retain() for this run
@@ -277,11 +278,18 @@ const server = http.createServer(async (request, response) => {
         );
       }
 
+      const fallbackTurns = results
+        .filter((result) => result.usedFallbackReply)
+        .map((result) => result.turn);
+
       sendJson(response, 200, {
         ok: true,
         waId,
         senderName,
         memoryEnabled,
+        cleanRun: fallbackTurns.length === 0,
+        fallbackTurns,
+        firstTurnMemories: results[0]?.memoriesAtTurnStart?.length ?? 0,
         turns: results,
       });
     } catch (error) {
