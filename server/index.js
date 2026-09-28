@@ -231,8 +231,8 @@ const server = http.createServer(async (request, response) => {
         const content = script[i];
         const turn = i + 1;
 
-        // 1.5 s inter-turn delay (skip before the very first turn)
-        if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+        // 8 s inter-turn delay (skip before the very first turn)
+        if (i > 0) await new Promise((r) => setTimeout(r, 8000));
 
         // Recall memories from Hindsight before analysis (skipped when memory=off)
         const memories = memoryEnabled ? await recallMemories(waId, content) : [];

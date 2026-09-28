@@ -22,7 +22,7 @@ const CATALOG_BLOCK = [
 ].join('\n');
 
 const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
-const MODEL_CHAIN = [PRIMARY_MODEL, 'gemini-3.8-flash', 'gemini-2.5-flash'];
+const MODEL_CHAIN = [PRIMARY_MODEL, 'gemini-3.8-flash'];
 
 let genAI = null;
 
@@ -58,12 +58,12 @@ async function callWithRetry(modelName, prompt) {
 
   const model = client.getGenerativeModel({ model: modelName });
   let lastErr;
+  let retryDelayMs = BASE_DELAY_MS;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-      console.log(`Gemini retry ${attempt}/${MAX_RETRIES} on ${modelName} after ${delay}ms`);
-      await new Promise((r) => setTimeout(r, delay));
+      console.log(`Gemini retry ${attempt}/${MAX_RETRIES} on ${modelName} after ${retryDelayMs}ms`);
+      await new Promise((r) => setTimeout(r, retryDelayMs));
     }
     try {
       const result = await model.generateContent(prompt);
@@ -72,6 +72,9 @@ async function callWithRetry(modelName, prompt) {
       const status = err.status ?? err.statusCode ?? (err.message?.match(/\[(\d{3})/)?.[1]);
       if (status && RETRYABLE.has(Number(status))) {
         lastErr = err;
+        retryDelayMs = Number(status) === 429
+          ? 10000
+          : BASE_DELAY_MS * Math.pow(2, attempt);
         continue;
       }
       throw err;
