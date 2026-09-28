@@ -18,6 +18,7 @@ import HowItWorks from './components/HowItWorks.jsx';
 import Features from './components/Features.jsx';
 import InteractiveDemo from './components/InteractiveDemo.jsx';
 import Footer from './components/Footer.jsx';
+import { ToastContainer } from './components/Toast.jsx';
 
 /* ───── helpers ───── */
 
