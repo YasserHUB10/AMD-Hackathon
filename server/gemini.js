@@ -37,6 +37,8 @@ function getGenAI() {
 const RETRYABLE = new Set([429, 503]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+// How long to wait between full chain retries (gives quota window time to reset)
+const CHAIN_RETRY_DELAYS_MS = [30_000, 60_000]; // first retry: 30s, second retry: 60s
 
 function redactSecrets(text) {
   return text
@@ -52,16 +54,25 @@ function logGeminiError(modelName, err) {
   console.error(`${modelName} failed (HTTP ${status}): ${message}`);
 }
 
+function getErrStatus(err) {
+  return Number(err?.status ?? err?.statusCode ?? (err?.message?.match(/\[(\d{3})/)?.[1]) ?? 0);
+}
+
 async function callWithRetry(modelName, prompt) {
   const client = getGenAI();
   if (!client) throw new Error('No Gemini API key configured');
 
   const model = client.getGenerativeModel({ model: modelName });
   let lastErr;
-  let retryDelayMs = BASE_DELAY_MS;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
+      const status = getErrStatus(lastErr);
+      // 429 quota: 15s / 30s / 60s — lets the per-minute window actually reset
+      // 503 overload: standard exponential 1s / 2s / 4s
+      const retryDelayMs = status === 429
+        ? 15_000 * attempt
+        : BASE_DELAY_MS * Math.pow(2, attempt - 1);
       console.log(`Gemini retry ${attempt}/${MAX_RETRIES} on ${modelName} after ${retryDelayMs}ms`);
       await new Promise((r) => setTimeout(r, retryDelayMs));
     }
@@ -69,14 +80,8 @@ async function callWithRetry(modelName, prompt) {
       const result = await model.generateContent(prompt);
       return result.response.text();
     } catch (err) {
-      const status = err.status ?? err.statusCode ?? (err.message?.match(/\[(\d{3})/)?.[1]);
-      if (status && RETRYABLE.has(Number(status))) {
-        lastErr = err;
-        retryDelayMs = Number(status) === 429
-          ? 10000
-          : BASE_DELAY_MS * Math.pow(2, attempt);
-        continue;
-      }
+      const status = getErrStatus(err);
+      if (RETRYABLE.has(status)) { lastErr = err; continue; }
       throw err;
     }
   }
@@ -149,16 +154,18 @@ export async function analyzeMessage(content, sender = 'Unknown', memories = [])
     return null;
   };
 
-  const firstAttempt = await runModelChain();
-  if (firstAttempt) return firstAttempt;
+  // Try the chain up to 3 times total, with increasing waits between attempts
+  for (let pass = 0; pass <= CHAIN_RETRY_DELAYS_MS.length; pass++) {
+    if (pass > 0) {
+      const waitMs = CHAIN_RETRY_DELAYS_MS[pass - 1];
+      console.error(`All Gemini models failed (pass ${pass}); waiting ${waitMs / 1000}s before retrying chain`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    const result = await runModelChain();
+    if (result) return result;
+  }
 
-  console.error('All Gemini models failed; waiting 3 seconds before retrying the chain');
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-
-  const secondAttempt = await runModelChain();
-  if (secondAttempt) return secondAttempt;
-
-  console.error('All Gemini models failed twice; returning hardcoded fallback');
+  console.error('All Gemini models failed all passes; returning hardcoded fallback');
   return {
     ...FALLBACK,
     aiSummary: content.slice(0, 100),
