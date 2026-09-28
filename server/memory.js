@@ -93,13 +93,15 @@ export async function recallMemories(waId, query) {
   if (!client) return [];
 
   try {
-    const results = await client.recall(bankId(waId), query);
+    // recall() returns { results: [...], trace, entities, chunks, ... }
+    const response = await client.recall(bankId(waId), query);
 
-    // results is typically an array of { content: string } or just strings
-    if (!results || results.length === 0) return [];
+    const items = response?.results;
+    if (!items || !Array.isArray(items) || items.length === 0) return [];
 
-    const memories = results
-      .map((r) => (typeof r === 'string' ? r : r.content || r.text || JSON.stringify(r)))
+    // Each item: { id, text, type, entities, scores, ... }
+    const memories = items
+      .map((r) => r.text || r.content || (typeof r === 'string' ? r : null))
       .filter(Boolean);
 
     console.log(`🧠 Hindsight recall() → bank="${bankId(waId)}" — ${memories.length} memories found`);
