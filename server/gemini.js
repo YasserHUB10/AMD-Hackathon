@@ -1,16 +1,60 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-let model = null;
+// ---------------------------------------------------------------------------
+// Model chain — primary model read from env, fallbacks tried in order
+// ---------------------------------------------------------------------------
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const MODEL_CHAIN = [PRIMARY_MODEL, 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
 
-function ensureModel() {
-  if (model) return true;
+// One GoogleGenerativeAI instance (key never changes at runtime)
+let genAI = null;
+
+function getGenAI() {
+  if (genAI) return genAI;
   const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) return false;
-  const genAI = new GoogleGenerativeAI(apiKey);
-  model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-  return true;
+  if (!apiKey) return null;
+  genAI = new GoogleGenerativeAI(apiKey);
+  return genAI;
 }
 
+// ---------------------------------------------------------------------------
+// Retry with exponential backoff — retries on 503 / 429 only
+// ---------------------------------------------------------------------------
+const RETRYABLE = new Set([429, 503]);
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+
+async function callWithRetry(modelName, prompt) {
+  const client = getGenAI();
+  if (!client) throw new Error('No Gemini API key configured');
+
+  const model = client.getGenerativeModel({ model: modelName });
+  let lastErr;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1); // 1 s, 2 s, 4 s
+      console.log(`  ↻ Gemini retry ${attempt}/${MAX_RETRIES} on ${modelName} after ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    try {
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (err) {
+      const status = err.status ?? err.statusCode ?? (err.message?.match(/\[(\d{3})/)?.[1]);
+      if (status && RETRYABLE.has(Number(status))) {
+        lastErr = err;
+        continue; // retry
+      }
+      throw err; // non-retryable (404, 400, etc.) — bubble up immediately
+    }
+  }
+  throw lastErr;
+}
+
+// ---------------------------------------------------------------------------
+// JSON extraction from Gemini text output
+// ---------------------------------------------------------------------------
 function parseJson(text) {
   try { return JSON.parse(text); } catch { /* empty */ }
   const m = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -20,6 +64,9 @@ function parseJson(text) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Hardcoded fallback (used only when every model in the chain fails)
+// ---------------------------------------------------------------------------
 const FALLBACK = {
   priority: 'medium',
   category: 'other',
@@ -29,19 +76,33 @@ const FALLBACK = {
   aiSummary: 'Message received.',
 };
 
+// ---------------------------------------------------------------------------
+// analyzeMessage — public API
+// ---------------------------------------------------------------------------
+
 /**
- * analyzeMessage — analyze a WhatsApp message with Gemini AI.
+ * Analyze a WhatsApp message with Gemini AI.
+ *
+ * Returns the standard analysis object plus three extra fields:
+ *   modelUsed        {string}  — which Gemini model actually answered
+ *   usedFallbackReply {boolean} — true only when ALL models failed and the
+ *                                  hardcoded generic reply was returned
+ *   memoriesUsed     {number}  — count of Hindsight memories injected
  *
  * @param {string}   content   Raw message text
  * @param {string}   sender    Display name of the sender
  * @param {string[]} memories  Past memories from Hindsight recall() for this contact
  */
 export async function analyzeMessage(content, sender = 'Unknown', memories = []) {
-  if (!ensureModel()) return { ...FALLBACK, aiSummary: content.slice(0, 100) };
+  if (!getGenAI()) {
+    return { ...FALLBACK, aiSummary: content.slice(0, 100), modelUsed: 'none', usedFallbackReply: true, memoriesUsed: 0 };
+  }
 
-  // Build context block from recalled memories (injected before the current message)
+  const memoriesUsed = memories.length;
+
+  // Build memory context block
   const memoryBlock =
-    memories.length > 0
+    memoriesUsed > 0
       ? [
           '--- CONTACT MEMORY (from previous conversations) ---',
           ...memories.map((m, i) => `[${i + 1}] ${m}`),
@@ -64,15 +125,32 @@ export async function analyzeMessage(content, sender = 'Unknown', memories = [])
     .filter(Boolean)
     .join('\n');
 
-  try {
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    const parsed = parseJson(text);
-    return parsed || { ...FALLBACK, aiSummary: content.slice(0, 100) };
-  } catch (err) {
-    console.error('Server Gemini error:', err.message);
-    return { ...FALLBACK, aiSummary: content.slice(0, 100) };
+  // Try each model in the chain
+  for (const modelName of MODEL_CHAIN) {
+    try {
+      console.log(`  🤖 Trying Gemini model: ${modelName}`);
+      const text = await callWithRetry(modelName, prompt);
+      const parsed = parseJson(text);
+      if (parsed) {
+        return { ...parsed, modelUsed: modelName, usedFallbackReply: false, memoriesUsed };
+      }
+      // Parsed returned null — response was not valid JSON; try next model
+      console.warn(`  ⚠️  ${modelName} returned non-JSON output, trying next model`);
+    } catch (err) {
+      console.error(`  ❌ ${modelName} failed after retries: ${err.message?.slice(0, 120)}`);
+      // continue to next model in chain
+    }
   }
+
+  // All models failed — return hardcoded fallback
+  console.error('  🚨 All Gemini models failed — returning hardcoded fallback');
+  return {
+    ...FALLBACK,
+    aiSummary: content.slice(0, 100),
+    modelUsed: 'none',
+    usedFallbackReply: true,
+    memoriesUsed,
+  };
 }
 
 export function isGeminiConfigured() {

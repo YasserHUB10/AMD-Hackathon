@@ -208,6 +208,9 @@ const server = http.createServer(async (request, response) => {
         const content = script[i];
         const turn = i + 1;
 
+        // 1.5 s inter-turn delay (skip before the very first turn)
+        if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+
         // Recall memories from Hindsight before analysis
         const memories = await recallMemories(waId, content);
 
@@ -238,10 +241,17 @@ const server = http.createServer(async (request, response) => {
           turn,
           message: content,
           memoriesAtTurnStart: memories,
+          modelUsed: analysis?.modelUsed ?? 'none',
+          usedFallbackReply: analysis?.usedFallbackReply ?? true,
+          memoriesUsed: analysis?.memoriesUsed ?? memories.length,
           analysis,
         });
 
-        console.log(`🎬 Demo turn ${turn}: ${memories.length} memories recalled`);
+        console.log(
+          `🎬 Demo turn ${turn}: ${memories.length} memories recalled` +
+          ` | model=${analysis?.modelUsed ?? 'none'}` +
+          ` | fallback=${analysis?.usedFallbackReply ?? true}`
+        );
       }
 
       sendJson(response, 200, {
